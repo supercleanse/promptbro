@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# PromptBro launcher. The stdlib-only commands run under the system Python; everything else
+# runs the GTK app from the venv that `promptbro setup` builds.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+case "${1:-}" in
+  pick-file|doctor|setup|migrate|uninstall-data)
+    exec /usr/bin/python3 -I "$ROOT/bin/promptbro-lite" "$@" ;;
+esac
+VENV="${XDG_DATA_HOME:-$HOME/.local/share}/promptbro/venv"
+if [ ! -x "$VENV/bin/python3" ]; then
+  msg="Run setup from the PromptBro menu"
+  [ -n "${PROMPTBRO_TEST:-}" ] || notify-send "PromptBro" "$msg" 2>/dev/null || true
+  echo "promptbro: not set up yet ($msg, or run: promptbro setup)" >&2
+  exit 3
+fi
+export LD_PRELOAD="/usr/lib/libgtk4-layer-shell.so${LD_PRELOAD:+:$LD_PRELOAD}"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+exec "$VENV/bin/python3" -m promptbro "$@"

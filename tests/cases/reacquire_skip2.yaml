@@ -1,0 +1,26 @@
+name: reacquire_skip2
+# At the end of line 1 the speaker skips lines 2 and 3 and reads line 4.
+script: |
+  Hey everyone, thanks for joining today.
+  I want to talk about where we are headed.
+  Last quarter was harder than we planned.
+  Revenue came in under our forecast,
+  and our costs grew faster than our sales.
+  So we made some changes this month.
+  We are building a smaller, sharper team.
+  We are building it to last for years.
+  Every person here was chosen on purpose.
+  Our customers will feel the difference first.
+  Support tickets get answered within a day.
+  Bugs get fixed on a sixty-day clock.
+  Here is what I need from each of you.
+  Bring me problems early, not late.
+  Thanks for listening, and let's get to work.
+start_unit: 14
+events:
+  - {speak: "revenue came in under our forecast", label: read}
+expect:
+  - {at_word: 1, of: read, unit: 14}
+  - {at_word: 4, of: read, line: 3}
+  - {at: end, unit: 27, committed: 27}
+invariants: [no_backward_without_key, provisional_ge_committed]

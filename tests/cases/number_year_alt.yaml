@@ -1,0 +1,16 @@
+name: number_year_alt
+# Alternate year reading.
+script: |
+  Welcome back to the show.
+  In 2026 we grew revenue 40% this year.
+  The plan costs $79 a month.
+  Their team shipped it right on time.
+  The quick brown fox jumps over the lazy dog.
+  Thanks for watching, and thanks for listening.
+  See you next week.
+start_unit: 4
+events:
+  - {speak: "in two thousand twenty six we grew"}
+expect:
+  - {at: end, unit: 8, committed: 8}
+invariants: [no_backward_without_key, provisional_ge_committed]

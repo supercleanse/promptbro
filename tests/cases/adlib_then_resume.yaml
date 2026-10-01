@@ -1,0 +1,18 @@
+name: adlib_then_resume
+# After an ad-lib the speaker resumes the script.
+script: |
+  Welcome back to the show.
+  In 2026 we grew revenue 40% this year.
+  The plan costs $79 a month.
+  Their team shipped it right on time.
+  The quick brown fox jumps over the lazy dog.
+  Thanks for watching, and thanks for listening.
+  See you next week.
+start_unit: 25
+events:
+  - {speak: "honestly I was surprised by that", label: adlib}
+  - {speak: "the quick brown", label: resume}
+expect:
+  - {during: adlib, unit: 25}
+  - {at: end, unit: 28, committed: 28}
+invariants: [no_backward_without_key, provisional_ge_committed]

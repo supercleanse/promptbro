@@ -1,0 +1,20 @@
+name: restart_sound_alike
+# Found by the T8 restart_sentence fixture: "their team shipped" is restarted, and the second
+# "team" sounds like "time" (two words later in the line). A sound-alike must not carry the
+# cursor past "shipped"/"it right on" to "time".
+script: |
+  Welcome back to the show.
+  In 2026 we grew revenue 40% this year.
+  The plan costs $79 a month.
+  Their team shipped it right on time.
+  The quick brown fox jumps over the lazy dog.
+start_unit: 20
+events:
+  - {t: 0.0, type: partial, text: "shipped"}
+  - {t: 0.4, type: partial, text: "shipped their"}
+  - {t: 0.6, type: partial, text: "shipped their team"}
+  - {t: 0.9, type: partial, text: "their team shipped their team"}
+expect:
+  - {after: 2, unit_max: 22}
+  - {after: 3, unit_max: 22}
+invariants: [no_backward_without_key, provisional_ge_committed]

@@ -1,0 +1,30 @@
+name: skip_line
+# The speaker skips two lines (2 and 3) and reads line 4. A two-line skip is the near tier:
+# it waits for enough new evidence ("the quick brown"), not for the far tier's second update.
+script: |
+  Welcome back to the show.
+  In 2026 we grew revenue 40% this year.
+  The plan costs $79 a month.
+  Their team shipped it right on time.
+  The quick brown fox jumps over the lazy dog.
+  Thanks for watching, and thanks for listening.
+  See you next week.
+start_unit: 12
+events:
+  - {t: 0.0, type: partial, text: "the"}
+  - {t: 0.2, type: partial, text: "the quick"}
+  - {t: 0.4, type: partial, text: "the quick brown"}
+  - {t: 0.6, type: partial, text: "the quick brown fox"}
+  - {t: 0.8, type: partial, text: "the quick brown fox jumps"}
+  - {t: 1.4, type: final,   text: "the quick brown fox jumps"}
+expect:
+  - {after: 0, line: 1, unit: 12}
+  # Changed after the author's first real session (BUILD_LOG "Re-acquisition"): skipping two lines
+  # to a line start should be caught within three to five words. "the quick" alone holds;
+  # "the quick brown" (two distinctive words in script order at a line start) jumps.
+  - {after: 1, line: 1, unit: 12}
+  - {after: 2, line: 4, unit: 28}
+  - {after: 3, line: 4, unit: 29}
+  - {after: 4, line: 4, unit_min: 29}
+  - {after: 5, line: 4, unit: 30, committed: 30}
+invariants: [no_backward_without_key, provisional_ge_committed]

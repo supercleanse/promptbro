@@ -1,0 +1,11 @@
+#!/usr/bin/python3 -I
+"""PromptBro commands that need only the standard library (pick-file, doctor, setup, migrate,
+uninstall-data). Isolated mode does not put the script's folder on sys.path, so add the repo
+root by hand; realpath makes it work through a symlink."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from promptbro.lite import main  # noqa: E402
+
+sys.exit(main())

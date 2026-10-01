@@ -1,0 +1,18 @@
+name: long_silence_resume_elsewhere
+# After a long silence the speaker resumes a line further on.
+script: |
+  Welcome back to the show.
+  In 2026 we grew revenue 40% this year.
+  The plan costs $79 a month.
+  Their team shipped it right on time.
+  The quick brown fox jumps over the lazy dog.
+  Thanks for watching, and thanks for listening.
+  See you next week.
+start_unit: 34
+events:
+  - {gap: 6, t0: 0.0, label: quiet}
+  - {speak: "see you next week", t0: 6.0}
+expect:
+  - {during: quiet, unit: 34}
+  - {at: end, unit: 45, committed: 45, line: 6}
+invariants: [no_backward_without_key, provisional_ge_committed]

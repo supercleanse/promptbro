@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=PromptBro
+Comment=A teleprompter that follows your voice
+Icon=supercleanse.PromptBro
+Exec=@BINPATH@ show
+Categories=AudioVideo;Utility;
+NoDisplay=false
+StartupNotify=true

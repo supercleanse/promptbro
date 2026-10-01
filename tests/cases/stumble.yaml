@@ -1,0 +1,16 @@
+name: stumble
+# Stutter repeats are cheap.
+script: |
+  Welcome back to the show.
+  In 2026 we grew revenue 40% this year.
+  The plan costs $79 a month.
+  Their team shipped it right on time.
+  The quick brown fox jumps over the lazy dog.
+  Thanks for watching, and thanks for listening.
+  See you next week.
+start_unit: 25
+events:
+  - {speak: "the the quick quick brown fox"}
+expect:
+  - {at: end, unit: 29, committed: 29}
+invariants: [no_backward_without_key, provisional_ge_committed]

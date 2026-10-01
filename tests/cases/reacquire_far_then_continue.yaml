@@ -1,0 +1,31 @@
+name: reacquire_far_then_continue
+# The speaker skips three lines (mid tier: needs more evidence than a near jump). Once the
+# display has jumped, the committed cursor follows it by the end of the utterance, and the
+# next utterance reads on from there instead of dragging the display back word by word
+# (seen live: a far preview jump that the committed cursor never confirmed slid back).
+script: |
+  Hey everyone, thanks for joining today.
+  I want to talk about where we are headed.
+  Last quarter was harder than we planned.
+  Revenue came in under our forecast,
+  and our costs grew faster than our sales.
+  So we made some changes this month.
+  We are building a smaller, sharper team.
+  We are building it to last for years.
+  Every person here was chosen on purpose.
+  Our customers will feel the difference first.
+  Support tickets get answered within a day.
+  Bugs get fixed on a sixty-day clock.
+  Here is what I need from each of you.
+  Bring me problems early, not late.
+  Thanks for listening, and let's get to work.
+start_unit: 5
+events:
+  - {speak: "and our costs grew faster than our sales", label: skip}
+  - {speak: "so we made some changes this month", t0: 4.0, label: next}
+expect:
+  - {at_word: 5, of: skip, line: 4}
+  - {at: skip, unit: 35, committed: 35}
+  - {during: next, unit_min: 35}
+  - {at: end, unit: 42, committed: 42}
+invariants: [no_backward_without_key, provisional_ge_committed]

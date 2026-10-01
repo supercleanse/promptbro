@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "promptbro"
+version = "0.2.0"
+description = "A voice-following teleprompter for Omarchy (sherpa-onnx, fully local)"
+requires-python = ">=3.14"
+dependencies = [
+    "sherpa-onnx==1.13.8",
+    "numpy>=2",
+    "rapidfuzz>=3.14",
+    "metaphone==0.6",
+    "num2words>=0.5.14",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+vosk = ["vosk==0.3.45"]
+
+[tool.setuptools.packages.find]
+include = ["promptbro", "promptbro.*"]
+exclude = ["proto*"]

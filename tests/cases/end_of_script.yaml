@@ -1,0 +1,18 @@
+name: end_of_script
+# Past the last word the cursor stays at the end.
+script: |
+  Welcome back to the show.
+  In 2026 we grew revenue 40% this year.
+  The plan costs $79 a month.
+  Their team shipped it right on time.
+  The quick brown fox jumps over the lazy dog.
+  Thanks for watching, and thanks for listening.
+  See you next week.
+start_unit: 41
+events:
+  - {speak: "see you next week thank you so much", label: talk}
+  - {speak: "thanks again everyone", label: more}
+expect:
+  - {at: end, unit: 45, committed: 45}
+  - {during: more, unit: 45}
+invariants: [no_backward_without_key, provisional_ge_committed]

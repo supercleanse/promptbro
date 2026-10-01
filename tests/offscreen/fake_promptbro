@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Stand-in for bin/promptbro, used only by the offscreen harness. Bridge.qml
+# runs `<cliPath> doctor --json`; this prints canned JSON chosen by the
+# harness through $PROMPTBRO_FAKE_RUNTIME/doctor-mode ("ok" or "bad").
+mode=$(cat "${PROMPTBRO_RUNTIME_DIR:-/nonexistent}/doctor-mode" 2>/dev/null || echo ok)
+if [[ "${1:-}" == "doctor" ]]; then
+  if [[ "$mode" == "bad" ]]; then
+    echo '{"ok": false, "problems": [{"id": "venv-missing", "message": "PromptBro needs its speech engine"}]}'
+    exit 1
+  fi
+  echo '{"ok": true, "problems": []}'
+  exit 0
+fi
+exit 0

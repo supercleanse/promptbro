@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "supercleanse.promptbro",
+  "name": "PromptBro",
+  "version": "0.2.0",
+  "author": "supercleanse",
+  "license": "MIT",
+  "description": "A teleprompter that follows your voice. Load a script from the bar, and PromptBro shows it a few lines at a time under the bar and scrolls as you speak. Speech recognition runs on your machine (sherpa-onnx, no cloud, no account, no GPU).",
+  "homepage": "https://github.com/supercleanse/promptbro",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "Widget.qml"},
+  "barWidget": {
+    "displayName": "PromptBro",
+    "description": "Script icon that shows whether PromptBro is listening. Click it to open a script, paste one, move a line up or down, restart, pause, show or hide the prompter, and quit.",
+    "category": "Productivity",
+    "aliases": ["promptbro", "teleprompter", "prompter", "script", "autocue"],
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {"showProgress": true},
+    "schema": [
+      {"key": "showProgress", "type": "boolean", "label": "Show line progress next to the icon", "defaultValue": true}
+    ]
+  }
+}

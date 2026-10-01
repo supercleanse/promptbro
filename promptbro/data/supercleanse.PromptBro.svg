@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Simple teleprompter glyph: a monitor with text lines -->
+
+  <!-- Monitor bezel -->
+  <rect x="8" y="8" width="48" height="36" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/>
+
+  <!-- Screen background -->
+  <rect x="10" y="10" width="44" height="32" fill="currentColor" opacity="0.1"/>
+
+  <!-- Text lines (3 lines representing script) -->
+  <line x1="14" y1="18" x2="50" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <line x1="14" y1="28" x2="50" y2="28" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
+  <line x1="14" y1="38" x2="50" y2="38" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Stand/tripod base -->
+  <rect x="18" y="46" width="28" height="2" rx="1" ry="1" fill="currentColor"/>
+  <line x1="20" y1="48" x2="16" y2="56" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <line x1="44" y1="48" x2="48" y2="56" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+</svg>

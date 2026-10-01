@@ -1,0 +1,11 @@
+name: stage_direction
+# An unmatchable stage direction is passed over for free.
+script: |
+  Welcome back.
+  (pause) Thanks for coming.
+start_unit: 1
+events:
+  - {speak: "thanks"}
+expect:
+  - {at: end, unit: 3, committed: 3, line: 1}
+invariants: [no_backward_without_key, provisional_ge_committed]

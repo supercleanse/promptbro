@@ -1,0 +1,11 @@
+__pycache__
+.pytest_cache
+tests/audio/*.wav
+!tests/audio/keep/
+tests/out/*.png
+tests/fixtures/private/
+artifacts/
+build/
+*.egg-info/
+.ruff_cache/
+tests/offscreen/out/

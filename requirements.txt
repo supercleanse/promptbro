@@ -1,0 +1,5 @@
+sherpa-onnx==1.13.8
+numpy==2.5.3
+rapidfuzz==3.14.6
+metaphone==0.6
+num2words==0.5.14
