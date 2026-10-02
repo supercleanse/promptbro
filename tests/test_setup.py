@@ -189,3 +189,75 @@ def test_uninstall_quits_a_running_instance(home, monkeypatch):
     fr = FakeRun()
     setup.uninstall_data(yes=True, out=lambda *_: None, run=fr)
     assert fr.calls and fr.calls[0][-1] == "quit"
+
+
+# ---- Package C: desktop Exec quoting, repair, stale notice -------------------------------
+def _parse_exec(line):
+    import shlex
+    val = line.split("=", 1)[1]
+    val = val.replace("\\\\", "\\")  # string-level unescape
+    # Exec-level: only quoted args with backslash escapes; %% -> %
+    out, cur, q, i, started = [], "", False, 0, False
+    while i < len(val):
+        c = val[i]
+        if q and c == "\\" and i + 1 < len(val):
+            cur += val[i + 1]
+            i += 2
+            continue
+        if c == '"':
+            q = not q
+            started = True
+        elif c == " " and not q:
+            if started or cur:
+                out.append(cur)
+            cur, started = "", False
+        else:
+            cur += c
+        i += 1
+    if started or cur:
+        out.append(cur)
+    return [a.replace("%%", "%") for a in out]
+
+
+def test_desktop_exec_quotes_awkward_paths(home, monkeypatch):
+    root = Path("/tmp/My Projects/Pr$o%mpt")
+    monkeypatch.setattr(paths, "repo_root", lambda: root)
+    real = Path(__file__).resolve().parent.parent
+    monkeypatch.setattr(setup.paths, "repo_root", lambda: real)
+    # use the real data dir for icon/template but a fake binary path
+    tpl = (real / "promptbro" / "data" / f"{paths.APP_ID}.desktop.in").read_text()
+    line = [l for l in tpl.replace("@BINPATH@", setup._exec_quote(str(root / "bin" / "promptbro"))).splitlines()
+            if l.startswith("Exec=")][0]
+    assert _parse_exec(line) == [str(root / "bin" / "promptbro"), "show"]
+
+
+def test_exec_quote_handles_quote_backtick_backslash(home):
+    p = '/tmp/a "b" `c` \\d/promptbro'
+    assert _parse_exec("Exec=" + setup._exec_quote(p) + " show") == [p, "show"]
+    assert setup._exec_quote("/plain/path") == "/plain/path"
+
+
+def test_install_model_repair(home, monkeypatch):
+    from promptbro import models
+    got = []
+    monkeypatch.setattr(models, "stale_tmp_dirs", lambda d: [])
+    monkeypatch.setattr(models, "download", lambda n, d, log=print, force=False: got.append(force))
+    monkeypatch.setattr(models, "has_manifest", lambda n, d: False)
+    setup._install_model("m", "/d", lambda *_: None, repair=True)
+    assert got == [True]  # no manifest -> downloaded again
+    monkeypatch.setattr(models, "has_manifest", lambda n, d: True)
+    monkeypatch.setattr(models, "verify", lambda n, d, deep=False: deep)
+    setup._install_model("m", "/d", lambda *_: None, repair=True)
+    assert got == [True]  # deep check passes -> untouched
+    monkeypatch.setattr(models, "verify", lambda n, d, deep=False: False)
+    setup._install_model("m", "/d", lambda *_: None, repair=True)
+    assert got == [True, True]
+
+
+def test_stale_tmp_notice(home, monkeypatch):
+    from promptbro import models
+    monkeypatch.setattr(models, "stale_tmp_dirs", lambda d: ["tmpabc"])
+    monkeypatch.setattr(models, "verify", lambda n, d, deep=False: True)
+    lines = []
+    setup._install_model("m", "/d", lines.append)
+    assert any("tmpabc" in l for l in lines)

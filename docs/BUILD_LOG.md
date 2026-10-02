@@ -175,7 +175,7 @@ Cause: onnxruntime intra-op threads busy-wait when `num_threads` is 2 (the earli
 **Acceptance result:**
 - `./install.sh` run twice: prints "already" for venv, model, config, icon, desktop ✓
 - Desktop file valid per `desktop-file-validate` with required Exec/Icon/Type fields ✓
-- Lua snippet prints with full `~/AI/Projects/Teleprompter/bin/teleprompter` paths ✓
+- Lua snippet prints with full `~/src/Teleprompter/bin/teleprompter` paths ✓
 - `~/.config/hypr/` never touched (install.sh prints snippet only, never edits config files) ✓
 - No British spellings in README.md, install.sh, or desktop file ✓
 - All 81 tests pass (71 existing + 1 skipped + 9 aligner/script/fixture variants) ✓
@@ -367,7 +367,7 @@ Full suite: 134 passed (was 116), offline (Broadway, private bus, no mic).
 **Status:** COMPLETE
 
 - Quit old app: `bin/teleprompter quit` (NameHasOwner cleared)
-- Repo moved: `~/AI/Projects/Teleprompter` → `~/AI/Projects/PromptBro`
+- Repo moved: `~/src/Teleprompter` → `~/src/PromptBro`
 - Commit count preserved: 25 commits
 - PROMPTBRO_PLAN.md: committed as part of T0
 
@@ -487,7 +487,7 @@ Full suite: 134 passed (was 116), offline (Broadway, private bus, no mic).
 - Backups (timestamp 1790822405): `~/.config/hypr/bindings.lua.bak.1790822405`, `~/.config/hypr/hyprland.lua.bak.1790822405`; config backup `config.toml.bak.t4-1790822405` (moved with the config dir into `~/.config/promptbro/`; migrate also left its own `config.toml.bak.*`). Delete the Hyprland backups after a week.
 - `promptbro migrate` moved (rename, nothing copied): `~/.config/teleprompter` -> `~/.config/promptbro`; `~/.local/share/teleprompter/models` (11 folders, 4.9 GB) -> `~/.local/share/promptbro/models`; `.../tts` -> `.../promptbro/tts`; `~/.local/state/teleprompter` -> `~/.local/state/promptbro`. Config `models_dir` repointed; `recent.json` seeded from the last script. Removed the old desktop entry, icon and `~/.local/bin/teleprompter` symlink (no alias).
 - `promptbro setup --dev`: new venv `~/.local/share/promptbro/venv` (Python 3.14.7, pytest installed), model already present, wrote `supercleanse.PromptBro.desktop`, linked `~/.local/bin/promptbro`. The old `~/.local/share/teleprompter/venv` is left in place; delete it later.
-- `scripts/dev-install.sh` does not exist yet; made the plugin link by hand: `~/.config/omarchy/plugins/supercleanse.promptbro -> ~/AI/Projects/PromptBro`.
+- `scripts/dev-install.sh` does not exist yet; made the plugin link by hand: `~/.config/omarchy/plugins/supercleanse.promptbro -> ~/src/PromptBro`.
 - Hyprland: `bindings.lua` lines 44-49 and `hyprland.lua` lines 31-33 replaced per plan 6.5 (same key names, plugin path, namespace `^promptbro$`). `hyprctl reload` ok, `hyprctl configerrors` empty, 5 binds described "PromptBro ...".
 - Suite with the new venv: 239 passed, 0 skipped (includes concurrent T5 tests).
 - Relaunched detached with his last script, line 149 restored, hidden. Launch guard verified: `status` with no instance printed `{"running": false, "state": "offline"}` and `NameHasOwner` stayed false.
@@ -536,3 +536,24 @@ Full suite: 134 passed (was 116), offline (Broadway, private bus, no mic).
 - The public repo is `supercleanse/promptbro`. Its `main` is produced from the local `public` branch, which started as an orphan branch (`git checkout --orphan public`) holding one commit, "PromptBro 0.2.0 - voice-following teleprompter for Omarchy". The private development history stays on `master` and is never pushed.
 - Remote `github` points at the public repo. Only `public:main` is pushed: `git push github public:main`. No other branches, no tags from the private history.
 - Future releases: finish and test on `master`, run the privacy scan again (home paths, names, emails, tokens, internal project names), then `git checkout public`, `git checkout master -- .` (and `git rm` anything deleted on master), commit as a new commit on top of the public history, and `git push github public:main`. Never merge `master` into `public` and never push `master`.
+
+## Fix: crash on display hotplug (2026-10-01)
+
+**Status:** COMPLETE
+
+**Crash.** SIGSEGV (SEGV_MAPERR) while the prompter was hidden, one second after the dock carrying the external display re-enumerated (kernel `pciehp` surprise hotplug). Symbolized core: frame 0 in libgtk-4 (no debug symbols published for 4.22.4), called from `wl_closure_invoke` for event `done` (opcode 0) on proxy id 27, a `zwp_linux_dmabuf_feedback_v1` whose user data is GDK's `DmabufFormatsInfo` named `"default"`. The faulting instruction loads `info->dmabuf_formats->tranches` (offset 0x28, then 0x8) from 0x...a8000, a page-aligned heap address that is no longer mapped. That is GTK bug a8a5692c: `linux_dmabuf_format_table()` passes the heap `DmabufFormats` pointer to `munmap()` instead of the mmap()ed table; when the compositor re-sends the default feedback (Hyprland does on every monitor hotplug) and the heap pointer happens to be page-aligned, the page is unmapped and the next `done` crashes. Fixed upstream in GTK 4.22.5 and 4.23.3; Arch still ships 4.22.4. Not caused by our code: no PromptBro or gtk4-layer-shell frame is on the stack, and gtk4-layer-shell 1.3.0 already ignores `.closed`, drops an invalidated monitor, and does not remap hidden windows.
+
+**Fix.**
+- `promptbro/gtkcompat.py` (stdlib only): reads the libgtk-4 version through ctypes (no GTK init) and, on affected versions (< 4.22.5, 4.23.0 to 4.23.2, or unknown), adds `zwp_linux_dmabuf_v1` to `GDK_WAYLAND_DISABLE`, keeping any existing entries. `__main__` calls it right after the layer-shell preload and before anything imports Gtk (PyGObject opens the display at import); `app._run` calls it again (idempotent). GDK then never creates the default feedback object, so the buggy handler cannot run. In GDK 4.22 that global is used only by subsurface graphics offload, which is NULL-guarded; the GL/Vulkan renderers bind their own through EGL/Vulkan WSI. Verified with `WAYLAND_DEBUG=1` against the live compositor (display connection only, no window): 2 dmabuf binds/requests without the variable, 0 with it. The startup log now records the GTK version and `GDK_WAYLAND_DISABLE`.
+- Hotplug hardening in `window.py` / `monitors.py`: `items-changed` does nothing but poke a 400 ms trailing debounce (`monitors.Debouncer`); after the list settles, `repick_action` defers while hidden (the layer surface is not touched until the next `show()`), remaps only when the target changed or the current monitor is gone, and otherwise keeps. Only connector names are stored; `find_monitor` / `valid_connectors` look monitors up fresh and skip invalid ones, so `set_monitor` only ever gets a valid monitor or None. `set_respect_close(False)` is explicit, and a close request (older gtk4-layer-shell forwarding `.closed`) is refused: the window hides through the app (status stays consistent) and the next show maps a fresh layer surface. The monitor-list handler holds a weak reference, is disconnected on destroy, and pending re-picks are cancelled on destroy/unrealize.
+
+**Tests.** `tests/test_gtkcompat.py` (version gating, env merging, ctypes version equals gi's, `python -m promptbro` sets the variable before Gtk loads); `tests/test_monitors.py` (fake monitors and a fake clock: burst coalescing, cancel, exceptions contained, invalid monitors never returned, the unplug/replug timeline); `tests/test_window_hotplug.py` runs `tests/window_hotplug_driver.py` under a private Broadway display with a fake layer-shell and fake monitor list: no `set_monitor` inside `items-changed`, hidden window untouched until show, one remap after settle when visible, keep on unrelated changes, only valid monitors reach layer-shell, compositor close survived, destroyed window finalized and disconnected.
+
+**Manual T10 check (real hotplug; no headless Hyprland here).** With the prompter open and hidden, then again visible: unplug the dock (or `hyprctl keyword monitor DP-1,disable` and re-enable), wait 2 s, replug. Expect no crash; the log shows `monitors changed ...` lines, then one `monitors settled: defer|remap|keep`; when visible it lands on the focused monitor; `promptbro status` still answers. `grep GDK_WAYLAND_DISABLE ~/.local/state/promptbro/*.log` shows `zwp_linux_dmabuf_v1` while GTK is older than 4.22.5.
+
+## Fix: Bluetooth mic and empty `open` path (2026-10-01)
+
+**Status:** COMPLETE
+
+- `promptbro/audiosel.py` (stdlib only) chooses the capture node from `pactl -f json list sources`. `audio device = "auto"` (also the empty string) keeps the default source unless it is Bluetooth (`bluez_*` or `device.bus = bluetooth`), else the best non-Bluetooth, non-monitor source, USB/external before built-in; never Bluetooth unless pinned. A pinned string is an exact node name, a glob, or a substring (`Studio_Display`); a missing pin falls back to auto. The worker re-picks at every start and resume and reports the node in `ready`/`resumed`; `promptbro status` shows `worker.device`.
+- `open` with an empty or blank path no longer resolves to the working directory: it reopens the last script, or starts idle. Directories are rejected with a one-line error. The empty argument came from a script launched under systemd (`open ""`, the primary's own first command); the desktop entry runs `show`, the hotkeys run `toggle`, and the QML guards non-empty paths.

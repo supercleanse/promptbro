@@ -40,6 +40,24 @@ def notify(message: str) -> None:
         pass
 
 
+class OpenError(ValueError):
+    """A bad `open` argument (a directory, say): reported plainly, no traceback."""
+
+
+def resolve_open(raw: str, cwd: str | None) -> Path | None:
+    """The file an `open` argument names. An empty or blank argument never means the current
+    directory: it returns None, and the caller reopens the last script (or opens nothing)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = Path(cwd or ".") / p
+    if p.is_dir():
+        raise OpenError(f"Can't open {p}: it is a folder, not a script")
+    return p
+
+
 def first_recent() -> str | None:
     """Most recent script in recent.json that still exists; None when there is none."""
     return recent.first_existing()
@@ -152,8 +170,27 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _lua_str(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _is_launching(args) -> bool:
+    return bool(args.verb is None or args.verb in ("open", "paste", "show", "toggle")
+                or args.open_path or args.demo or args.replay or args.wav)
+
+
+def _status_enabled(app_id: str, env) -> bool:
+    """Only the real app (or a test with its own runtime dir) may write the shared status file."""
+    return app_id == APP_ID or bool(env.get("PROMPTBRO_RUNTIME_DIR"))
+
+
+def _paste_command(sender_value, test_mode: bool) -> str:
+    """The sender's PROMPTBRO_PASTE_CMD is a test hook; production always uses wl-paste."""
+    return (sender_value if test_mode and sender_value else None) or "wl-paste --no-newline"
+
+
 def hypr_snippet(hide_from_share: bool = True) -> str:
-    b = BIN
+    b = _lua_str(shlex.quote(str(BIN)))
     share = "" if hide_from_share else "-- "
     return f'''-- PromptBro: paste into ~/.config/hypr/hyprland.lua and bindings.lua yourself.
 hl.layer_rule({{ match = {{ namespace = "^promptbro$" }}, animation = "fade" }})
@@ -194,6 +231,8 @@ def main(argv=None) -> int:
 
 
 def _run(argv, args) -> int:
+    from .gtkcompat import apply_dmabuf_workaround
+    apply_dmabuf_workaround()   # before Gtk opens the display; no-op if __main__ already did
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Gdk", "4.0")
@@ -211,8 +250,7 @@ def _run(argv, args) -> int:
               "(pass --app-id-suffix)", file=sys.stderr)
         return 3
     os.environ[SENDER_ENV] = describe_sender()
-    launching = (args.verb is None or args.verb in ("open", "paste", "show", "toggle")
-                 or args.open_path or args.demo or args.replay or args.wav)
+    launching = _is_launching(args)
     if not launching and not _name_has_owner(Gio, app_id):
         # Nothing to control. Never construct the application: that would own the name.
         if args.verb == "status":
@@ -249,6 +287,9 @@ def _run(argv, args) -> int:
             lp = setup_logging(a.log_level or self.cfg.log.level)
             log.info("promptbro %s starting (app id %s, pid %d, log %s)", __version__, app_id,
                      os.getpid(), lp)
+            log.info("gtk %d.%d.%d; GDK_WAYLAND_DISABLE=%s", Gtk.get_major_version(),
+                     Gtk.get_minor_version(), Gtk.get_micro_version(),
+                     os.environ.get("GDK_WAYLAND_DISABLE", ""))
             self._css = Gtk.CssProvider()
             Gtk.StyleContext.add_provider_for_display(
                 Gdk.Display.get_default(), self._css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -258,12 +299,14 @@ def _run(argv, args) -> int:
             self.ctl = controller.Controller(self.win.view, self.cfg, source=source, wav=a.wav,
                                              replay=a.replay, model=a.model, device=a.device)
             self.ctl.on_finished = self._input_finished
+            self.win.on_closed = lambda: self._set_visible(False)
             self._headless = a.headless_status
             if self._headless:
                 GLib.timeout_add(1000, self._print_status)
             self._theme_mon = theme.watch(self._reload_theme)
             self._add_actions()
-            self.ctl.start_status()
+            if _status_enabled(app_id, os.environ):
+                self.ctl.start_status()
             self.hold()  # stay alive while the window is hidden
 
         # ---- GActions (exported on the session bus at /<app/id>) -----------
@@ -355,6 +398,13 @@ def _run(argv, args) -> int:
                 cmdline.printerr_literal(f"promptbro: {e}\n")
                 return 2
             first = self.win is None
+            if first and not _is_launching(a):
+                # Lost the launch race to a quitting instance: never become a blank primary.
+                if a.verb == "status":
+                    cmdline.print_literal(json.dumps({"running": False, "state": "offline"}) + "\n")
+                    return 0
+                cmdline.printerr_literal("promptbro: not running\n")
+                return 1
             if first:
                 try:
                     self._build(a)
@@ -373,7 +423,7 @@ def _run(argv, args) -> int:
             try:
                 return self._dispatch(a, cmdline, first)
             except Exception as e:  # noqa: BLE001
-                log.exception("verb failed")
+                (log.error if isinstance(e, OpenError) else log.exception)("verb failed: %s", e)
                 if first and a.verb in ("open", "paste"):
                     return self._first_launch_failed(e, cmdline)
                 cmdline.printerr_literal(f"promptbro: {e}\n")
@@ -388,12 +438,16 @@ def _run(argv, args) -> int:
                 self._set_visible(True)
             elif a.open_path or (a.replay and a.verb is None):
                 if a.open_path:
-                    p = Path(a.open_path).expanduser()
-                    if not p.is_absolute():
-                        p = Path(cmdline.get_cwd() or ".") / p
-                    self.ctl.load_file(str(p))
-                    remember(self.ctl.path)
-                    self._set_visible(True)
+                    p = resolve_open(a.open_path, cmdline.get_cwd())
+                    if p is None:
+                        p = first_recent()
+                    if p:
+                        self.ctl.load_file(str(p))
+                        remember(self.ctl.path)
+                        self._set_visible(True)
+                    else:
+                        log.info("open with an empty path and nothing recent: starting idle")
+                        self._set_visible(False)
                 elif self.ctl.load_replay_script():
                     self._set_visible(True)
                 else:
@@ -459,9 +513,17 @@ def _run(argv, args) -> int:
             elif verb == "open":
                 if not rest:
                     raise ValueError("open needs a path")
-                p = Path(rest[0]).expanduser()
-                if not p.is_absolute():
-                    p = Path(cmdline.get_cwd() or ".") / p
+                p = resolve_open(rest[0], cmdline.get_cwd())
+                if p is None:  # empty path: reopen the last script, else nothing to open
+                    last = first_recent()
+                    if not last:
+                        log.info("open with an empty path and nothing recent: nothing to do")
+                        if first:
+                            self._set_visible(False)
+                        else:
+                            notify("No script to open")
+                        return 0
+                    p = Path(last)
                 try:
                     c.load_file(str(p))
                 except FileNotFoundError:
@@ -470,7 +532,8 @@ def _run(argv, args) -> int:
                 remember(c.path)
                 self._set_visible(True)
             elif verb == "paste":
-                raw = cmdline.getenv("PROMPTBRO_PASTE_CMD") or "wl-paste --no-newline"
+                raw = _paste_command(cmdline.getenv("PROMPTBRO_PASTE_CMD"),
+                                     bool(os.environ.get(TEST_ENV)))
                 out = subprocess.run(shlex.split(raw), capture_output=True, text=True, timeout=5,
                                      cwd=cmdline.get_cwd() or None)
                 if out.returncode != 0:

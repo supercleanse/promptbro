@@ -66,7 +66,7 @@ H=$(stage harness.qml harness)
 run "$H" "$OUT/harness.log"
 count=$(ls "$OUT"/widget-*.png "$OUT"/dropdown-*.png 2>/dev/null | wc -l)
 echo "render: $count PNG(s) in $OUT"
-[[ $count -ge 15 ]] || { echo "render: expected 15 PNGs" >&2; exit 1; }
+[[ $count -ge 19 ]] || { echo "render: expected 19 PNGs" >&2; exit 1; }
 
 B=$(stage bridge_check.qml bridge)
 run "$B" "$OUT/bridge.log"

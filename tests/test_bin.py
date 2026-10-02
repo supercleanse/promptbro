@@ -39,7 +39,7 @@ def test_app_commands_exec_the_venv_python(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "PRELOAD=/usr/lib/libgtk4-layer-shell.so" in r.stdout
     assert f"PYPATH={ROOT}" in r.stdout
-    assert "ARGS=-m promptbro open x.md" in r.stdout
+    assert "ARGS=-P -m promptbro open x.md" in r.stdout
 
 
 def test_symlink_resolves_root(tmp_path):
@@ -55,3 +55,21 @@ def test_symlink_resolves_root(tmp_path):
 def test_xdg_data_home_is_honored(tmp_path):
     r = run(["next"], tmp_path, XDG_DATA_HOME=str(tmp_path / "elsewhere"))
     assert r.returncode == 3
+
+
+def test_cwd_package_cannot_shadow_the_app(tmp_path):
+    """-P keeps the working directory off sys.path, so a hostile ./promptbro/ never runs."""
+    import sys
+    py = tmp_path / "data" / "promptbro" / "venv" / "bin" / "python3"
+    py.parent.mkdir(parents=True)
+    py.symlink_to(sys.executable)
+    evil = tmp_path / "evil"
+    (evil / "promptbro").mkdir(parents=True)
+    (evil / "promptbro" / "__main__.py").write_text('print("SHADOWED")\n')
+    (evil / "promptbro" / "__init__.py").write_text("")
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path), "XDG_DATA_HOME": str(tmp_path / "data"),
+           "PROMPTBRO_TEST": "1"}
+    r = subprocess.run([str(BIN), "--version"], capture_output=True, text=True, env=env,
+                       cwd=evil, timeout=30)
+    assert "SHADOWED" not in r.stdout
+    assert r.stdout.startswith("promptbro "), (r.stdout, r.stderr)

@@ -41,6 +41,15 @@ Panel {
 
   Bridge { id: bridge }
 
+  // ---- reveal: copied from Spitball (which mirrors omarchy.indicators).
+  // Collapses to zero width unless in use, the dropdown is open, this
+  // widget is hovered, or the bar's center section is hover-revealed.
+  property bool selfHovered: false
+  property bool forceReveal: false   // test hook for the offscreen harness
+  readonly property bool centerRevealed: !!bar && bar.centerSectionRevealHeld === true && bar.centerHoverRevealSuppressed !== true
+  readonly property bool inUse: Model.inUse(bridge.st, root.uiState)
+  readonly property bool shouldShow: inUse || opened || selfHovered || centerRevealed || forceReveal
+
   onOpenedChanged: if (root.opened) bridge.refreshDoctor()
 
   // The layering rule: the dropdown is a layer-shell surface with exclusive
@@ -71,61 +80,80 @@ Panel {
 
   visible: true
   clip: true
-  implicitWidth: button.implicitWidth
-  implicitHeight: Math.max(button.implicitHeight, root.barSize)
+  implicitWidth: collapseArea.implicitWidth
+  implicitHeight: collapseArea.implicitHeight
 
-  WidgetButton {
-    id: button
-    anchors.centerIn: parent
-    bar: root.bar
-    text: " "
-    labelVisible: false
-    hasVisualContent: true
-    tooltipText: Model.tooltipFor(bridge.st, root.uiState, bridge.doctor)
-    keepSpace: false
-    dimmed: root.uiState === "offline"
-    fixedWidth: vertical ? -1 : Math.round(barContent.implicitWidth + Style.spaceReal(7) * 2)
-    fixedHeight: vertical ? Math.round(barContent.implicitHeight + Style.spaceReal(6) * 2) : -1
+  // Outer item collapses (clipped); the button keeps its natural size so
+  // the reveal is a clean width change, as in Spitball.
+  Item {
+    id: collapseArea
+    clip: true
+    implicitWidth: root.vertical ? Math.max(button.implicitWidth, root.barSize)
+      : (root.shouldShow ? button.implicitWidth : 0)
+    implicitHeight: root.vertical ? (root.shouldShow ? button.implicitHeight : 0)
+      : Math.max(button.implicitHeight, root.barSize)
+    width: implicitWidth
+    height: implicitHeight
 
-    // A bar click only opens the menu.
-    onPressed: function(b) {
-      if (b === Qt.LeftButton || b === Qt.RightButton) root.toggle()
+    HoverHandler {
+      onHoveredChanged: root.selfHovered = hovered
     }
 
-    Grid {
-      id: barContent
+    WidgetButton {
+      id: button
       anchors.centerIn: parent
-      columns: button.vertical ? 1 : 2
-      rowSpacing: Style.space(2)
-      columnSpacing: Style.space(5)
-      horizontalItemAlignment: Grid.AlignHCenter
-      verticalItemAlignment: Grid.AlignVCenter
+      bar: root.bar
+      text: " "
+      labelVisible: false
+      hasVisualContent: true
+      tooltipText: Model.tooltipFor(bridge.st, root.uiState, bridge.doctor)
+      keepSpace: false
+      concealed: !root.shouldShow
+      interactive: root.shouldShow
+      dimmed: root.uiState === "offline"
+      fixedWidth: vertical ? -1 : Math.round(barContent.implicitWidth + Style.spaceReal(7) * 2)
+      fixedHeight: vertical ? Math.round(barContent.implicitHeight + Style.spaceReal(6) * 2) : -1
 
-      Text {
-        textFormat: Text.PlainText
-        text: root.glyphChar
-        color: root.glyphColor
-        font.family: root.fontFamily
-        font.pixelSize: Style.bar.iconFont
-        renderType: Text.NativeRendering
-
-        // Gentle pulse while the model loads; every other state is steady.
-        SequentialAnimation on opacity {
-          loops: Animation.Infinite
-          running: root.uiState === "starting"
-          NumberAnimation { from: 1.0; to: 0.4; duration: 650; easing.type: Easing.InOutSine }
-          NumberAnimation { from: 0.4; to: 1.0; duration: 650; easing.type: Easing.InOutSine }
-        }
+      // A bar click only opens the menu.
+      onPressed: function(b) {
+        if (b === Qt.LeftButton || b === Qt.RightButton) root.toggle()
       }
 
-      Text {
-        textFormat: Text.PlainText
-        visible: root.labelText !== ""
-        text: root.labelText
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        renderType: Text.NativeRendering
+      Grid {
+        id: barContent
+        anchors.centerIn: parent
+        columns: button.vertical ? 1 : 2
+        rowSpacing: Style.space(2)
+        columnSpacing: Style.space(5)
+        horizontalItemAlignment: Grid.AlignHCenter
+        verticalItemAlignment: Grid.AlignVCenter
+
+        Text {
+          textFormat: Text.PlainText
+          text: root.glyphChar
+          color: root.glyphColor
+          font.family: root.fontFamily
+          font.pixelSize: Style.bar.iconFont
+          renderType: Text.NativeRendering
+
+          // Gentle pulse while the model loads; every other state is steady.
+          SequentialAnimation on opacity {
+            loops: Animation.Infinite
+            running: root.uiState === "starting"
+            NumberAnimation { from: 1.0; to: 0.4; duration: 650; easing.type: Easing.InOutSine }
+            NumberAnimation { from: 0.4; to: 1.0; duration: 650; easing.type: Easing.InOutSine }
+          }
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          visible: root.labelText !== ""
+          text: root.labelText
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          renderType: Text.NativeRendering
+        }
       }
     }
   }

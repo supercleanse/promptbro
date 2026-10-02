@@ -188,3 +188,95 @@ def test_second_toggle_still_toggles(tmp_path):
     r = _session(tmp_path, script, 45)
     st = [json.loads(x) for x in r.stdout.splitlines() if x.startswith("{")]
     assert st and st[0]["visible"] is False, (r.stdout, r.stderr)
+
+
+def test_hypr_snippet_quotes_paths_with_spaces(monkeypatch):
+    import shlex
+    from promptbro import app
+    weird = '/tmp/My "Proj"/bin/promptbro'
+    monkeypatch.setattr(app, "BIN", Path(weird))
+    line = next(ln for ln in app.hypr_snippet(True).splitlines() if "PromptBro toggle" in ln)
+    lua = line.split('"PromptBro toggle",', 1)[1].strip().rstrip(")").strip()
+    assert lua.startswith('"') and lua.endswith('"')
+    cmd = lua[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    assert shlex.split(cmd) == [weird, "toggle"]
+
+
+def test_status_enabled_predicate():
+    from promptbro.app import APP_ID, _status_enabled
+    assert _status_enabled(APP_ID, {})
+    assert not _status_enabled(APP_ID + ".Demo", {})
+    assert _status_enabled(APP_ID + ".Demo", {"PROMPTBRO_RUNTIME_DIR": "/x"})
+    assert _status_enabled(APP_ID + ".test", {"PROMPTBRO_RUNTIME_DIR": "/x"})
+
+
+def test_paste_command_only_overridable_in_test_mode():
+    from promptbro.app import _paste_command
+    assert _paste_command("echo hi", True) == "echo hi"
+    assert _paste_command("echo hi", False) == "wl-paste --no-newline"
+    assert _paste_command(None, True) == "wl-paste --no-newline"
+
+
+def test_verb_losing_launch_race_exits_without_becoming_primary(tmp_path):
+    run = tmp_path / "run"
+    stub = ("import sys, promptbro.app as a; a._name_has_owner = lambda *x: True; "
+            "sys.exit(a.main(['--app-id-suffix','race','next']))")
+    script = (f"{sys.executable} -c \"{stub}\" 2>&1; echo RC=$?\n"
+              "gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus "
+              "--method org.freedesktop.DBus.NameHasOwner supercleanse.PromptBro.race\n")
+    t0 = time.time()
+    r = _session(tmp_path, script, 0, {"PROMPTBRO_RUNTIME_DIR": str(run)})
+    assert time.time() - t0 < 30
+    assert "RC=1" in r.stdout and "not running" in r.stdout, (r.stdout, r.stderr)
+    assert "(false,)" in r.stdout
+    assert not (run / "promptbro" / "status.json").exists() and not (run / "status.json").exists()
+
+
+# ---------------------------------------------------------------- empty `open` path
+
+def test_resolve_open(tmp_path):
+    from promptbro.app import OpenError, resolve_open
+    assert resolve_open("", str(tmp_path)) is None
+    assert resolve_open("  \t", str(tmp_path)) is None
+    assert resolve_open("a.md", str(tmp_path)) == tmp_path / "a.md"
+    with pytest.raises(OpenError):
+        resolve_open(str(tmp_path), "/")
+    with pytest.raises(OpenError):
+        resolve_open(".", str(tmp_path))  # a dot is the cwd: a folder, not a script
+
+
+def test_open_empty_path_first_launch_reopens_last(tmp_path):
+    _recent_json(tmp_path, [SKIP])
+    script = (
+        "send open -- '' & PRIMARY=$!\n"
+        "sleep 2\n"
+        "send status\n"
+        "send quit; wait $PRIMARY\n"
+    )
+    r = _session(tmp_path, script, 46)
+    st = [json.loads(x) for x in r.stdout.splitlines() if x.startswith("{")]
+    assert st and st[0]["path"] == str(SKIP) and st[0]["visible"] is True, (r.stdout, r.stderr)
+
+
+def test_open_empty_path_without_recent_starts_idle(tmp_path):
+    script = (
+        "send open -- '   ' & PRIMARY=$!\n"
+        "sleep 2\n"
+        "send status\n"
+        "send open -- ''; echo RC=$?\n"
+        "send quit; wait $PRIMARY\n"
+    )
+    r = _session(tmp_path, script, 47)
+    st = [json.loads(x) for x in r.stdout.splitlines() if x.startswith("{")]
+    assert st and st[0]["path"] is None and st[0]["visible"] is False, (r.stdout, r.stderr)
+    assert "RC=0" in r.stdout and "Traceback" not in r.stdout + r.stderr
+
+
+def test_open_directory_is_rejected_cleanly(tmp_path):
+    script = (
+        f"send open {tmp_path} 2>&1; echo RC=$?\n"
+        "owned\n"
+    )
+    r = _session(tmp_path, script, 48)
+    assert "RC=1" in r.stdout and "folder" in r.stdout and "Traceback" not in r.stdout + r.stderr, (r.stdout, r.stderr)
+    assert "(true,)" not in r.stdout

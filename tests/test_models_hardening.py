@@ -87,7 +87,7 @@ class TestChecksumVerification:
         models_dir.mkdir()
 
         # Mock urllib to return our tiny archive
-        def mock_urlopen(req):
+        def mock_urlopen(req, timeout=None):
             from io import BytesIO
 
             with open(tiny_tar_archive, "rb") as f:
@@ -231,7 +231,7 @@ class TestDownloadIntegration:
             def read(self, size=-1):
                 return self._buf.read(size)
 
-        def mock_urlopen(req):
+        def mock_urlopen(req, timeout=None):
             return MockResponse()
 
         monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
@@ -311,3 +311,156 @@ class TestRegistryChecksums:
             assert len(spec.sha256) == 64 and all(c in "0123456789abcdef" for c in spec.sha256), name
             assert spec.sha256 not in placeholders, name
             assert len(set(spec.sha256)) > 8, name
+
+
+# ---- Package C: manifest, lock, timeout, stale temp dirs ---------------------------------
+FILES = ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")
+
+
+def _serve(monkeypatch, archive, seen=None):
+    data = Path(archive).read_bytes()
+
+    def fake(req, timeout=None):
+        if seen is not None:
+            seen.append(timeout)
+        from io import BytesIO
+        b = BytesIO(data)
+        b.__enter__ = lambda self=b: self
+        return _Resp(data)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake)
+
+
+class _Resp:
+    def __init__(self, data):
+        from io import BytesIO
+        self._b = BytesIO(data)
+
+    def read(self, n=-1):
+        return self._b.read(n)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+@pytest.fixture
+def tiny_model(tiny_tar_archive):
+    spec = models.ModelSpec("tiny-model", "http://example.com/tiny.tar.bz2", FILES, 1,
+                            compute_sha256(tiny_tar_archive))
+    with mock.patch.dict(models.REGISTRY, {spec.name: spec}):
+        yield spec
+
+
+def _install(tmp_path, monkeypatch, archive, seen=None):
+    md = tmp_path / "models"
+    _serve(monkeypatch, archive, seen)
+    models.download("tiny-model", md, log=lambda x: None)
+    return md, md / "tiny-model"
+
+
+def test_install_writes_manifest_and_uses_timeout(tmp_path, monkeypatch, tiny_tar_archive, tiny_model):
+    seen = []
+    md, d = _install(tmp_path, monkeypatch, tiny_tar_archive, seen)
+    man = json.loads((d / models.MANIFEST).read_text())
+    assert man["archive_sha256"] == tiny_model.sha256 and set(man["files"]) == set(FILES)
+    assert seen == [30]
+    assert models.verify("tiny-model", md) and models.verify("tiny-model", md, deep=True)
+    assert not [p for p in md.iterdir() if p.name.startswith((".promptbro-dl-", ".promptbro-old-"))]
+
+
+def test_truncation_caught_cheaply_same_size_corruption_only_deep(tmp_path, monkeypatch,
+                                                                  tiny_tar_archive, tiny_model):
+    md, d = _install(tmp_path, monkeypatch, tiny_tar_archive)
+    (d / "encoder.int8.onnx").write_bytes(b"enc")  # truncated
+    assert not models.verify("tiny-model", md)
+    (d / "encoder.int8.onnx").write_bytes(b"ENCODER")  # same size as b"encoder"
+    assert models.verify("tiny-model", md)
+    assert not models.verify("tiny-model", md, deep=True)
+
+
+def test_legacy_install_without_manifest_stays_valid(tmp_path, tiny_model):
+    d = tmp_path / "models" / "tiny-model"
+    d.mkdir(parents=True)
+    for f in FILES:
+        (d / f).write_bytes(b"x")
+    assert models.verify("tiny-model", tmp_path / "models")
+    assert not models.has_manifest("tiny-model", tmp_path / "models")
+
+
+def test_manifest_for_another_archive_is_invalid(tmp_path, monkeypatch, tiny_tar_archive, tiny_model):
+    md, d = _install(tmp_path, monkeypatch, tiny_tar_archive)
+    man = json.loads((d / models.MANIFEST).read_text())
+    man["archive_sha256"] = "0" * 64
+    (d / models.MANIFEST).write_text(json.dumps(man))
+    assert not models.verify("tiny-model", md)
+
+
+def test_reinstall_over_existing_dest_does_not_nest(tmp_path, monkeypatch, tiny_tar_archive, tiny_model):
+    md, d = _install(tmp_path, monkeypatch, tiny_tar_archive)
+    (d / "encoder.int8.onnx").write_bytes(b"x")
+    models.download("tiny-model", md, log=lambda x: None)
+    assert models.verify("tiny-model", md, deep=True)
+    assert not (d / "tiny-model").exists() and not (d / "model").exists()
+
+
+def test_force_redownloads_a_healthy_model(tmp_path, monkeypatch, tiny_tar_archive, tiny_model):
+    md, d = _install(tmp_path, monkeypatch, tiny_tar_archive)
+    (d / "extra.txt").write_text("marker")
+    models.download("tiny-model", md, log=lambda x: None)
+    assert (d / "extra.txt").exists()  # present: no work
+    models.download("tiny-model", md, log=lambda x: None, force=True)
+    assert not (d / "extra.txt").exists()
+
+
+def test_second_installer_rechecks_under_lock(tmp_path, monkeypatch, tiny_tar_archive, tiny_model):
+    import threading
+    import fcntl
+    md = tmp_path / "models"
+    md.mkdir()
+    lock = open(md / ".install.lock", "a+")
+    fcntl.flock(lock, fcntl.LOCK_EX)  # a first installer is mid-flight
+    calls = []
+    _serve(monkeypatch, tiny_tar_archive, calls)
+    t = threading.Thread(target=models.download, args=("tiny-model", md, lambda x: None))
+    t.start()
+    t.join(0.5)
+    assert t.is_alive() and not calls  # blocked on the lock
+    # first installer finishes and publishes
+    d = md / "tiny-model"
+    d.mkdir()
+    for f in FILES:
+        (d / f).write_bytes(b"x")
+    fcntl.flock(lock, fcntl.LOCK_UN)
+    lock.close()
+    t.join(5)
+    assert not t.is_alive() and not calls  # rechecked, no download, nothing overwritten
+    assert (d / "encoder.int8.onnx").read_bytes() == b"x"
+
+
+def test_failed_install_leaves_no_temp_and_stale_ones_are_swept(tmp_path, monkeypatch,
+                                                                tiny_tar_archive, tiny_model):
+    md = tmp_path / "models"
+    (md / ".promptbro-dl-dead").mkdir(parents=True)
+    (md / ".promptbro-dl-dead" / "partial").write_bytes(b"x" * 10)
+    (md / "tmpabc123").mkdir()
+    bad = models.ModelSpec("tiny-model", tiny_model.url, FILES, 1, "0" * 64)
+    _serve(monkeypatch, tiny_tar_archive)
+    with mock.patch.dict(models.REGISTRY, {"tiny-model": bad}):
+        with pytest.raises(RuntimeError, match="checksum"):
+            models.download("tiny-model", md, log=lambda x: None)
+    assert [p.name for p in md.iterdir() if p.name.startswith(".promptbro-")] == []
+    assert (md / "tmpabc123").exists()  # old-style leftovers only reported
+    assert models.stale_tmp_dirs(md) == ["tmpabc123"]
+
+
+def test_archive_missing_required_files_is_not_published(tmp_path, monkeypatch, tiny_tar_archive, tiny_model):
+    short = models.ModelSpec("tiny-model", tiny_model.url, FILES + ("nope.bin",), 1, tiny_model.sha256)
+    _serve(monkeypatch, tiny_tar_archive)
+    md = tmp_path / "models"
+    with mock.patch.dict(models.REGISTRY, {"tiny-model": short}):
+        with pytest.raises(RuntimeError, match="missing required files"):
+            models.download("tiny-model", md, log=lambda x: None)
+    assert not (md / "tiny-model").exists()

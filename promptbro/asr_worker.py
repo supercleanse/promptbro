@@ -22,6 +22,7 @@ BLOCK_MS = 20       # feed the recognizer every 20 ms: a chunk decodes as soon a
 LEVEL_EVERY = 4000  # 250 ms of audio
 NO_AUDIO_S = 3.0    # mic: no samples this long while listening -> restart the capture pipeline
 NO_AUDIO_TRIES = 3  # ... and after this many restarts in a row with no audio, report an error
+MAX_BACKLOG_S = 5.0  # mic: keep at most this much undecoded audio queued; drop the oldest beyond it
 _EOS = object()
 
 
@@ -36,12 +37,25 @@ class Worker:
         self.t0 = time.monotonic()
         self.audio_t = 0.0  # seconds of audio consumed (used as clock in --wav mode)
         self.pipeline = None
+        self._pending = np.zeros(0, dtype=np.float32)  # samples not yet cut into a block
         self.wav = bool(args.wav)
         self.model_name = ""
         self.block = max(160, int(RATE * args.block_ms / 1000))
-        self.last_audio = time.monotonic()  # mic watchdog: when samples last arrived
+        self.max_backlog_blocks = max(1, int(MAX_BACKLOG_S * RATE / self.block))
+        self.backlog_warned = False         # one warning per backlog episode
+        # Mic watchdog. last_audio moves only when real samples arrive; last_restart when the
+        # capture is (re)started (startup, resume, watchdog restart). Keeping them apart is what
+        # lets dead_tries count consecutive restarts that brought no audio back.
+        self.clock = time.monotonic         # injectable for tests
+        self.last_audio = self.clock()
+        self.last_restart = self.last_audio
+        self.dead_tries = 0
         self.stalled = False                # --simulate-stall (tests): drop audio after a resume
+        # Lock order everywhere: pipe_lock, then out_lock. Nothing writes stdout (emit/status take
+        # out_lock and write) while holding pipe_lock: a pipeline state change can block, and the
+        # paused flag is only ever flipped under pipe_lock so a watchdog restart can re-check it.
         self.pipe_lock = threading.Lock()
+        self.chosen_device = ""             # node the mic element targets (audiosel)
 
     # ---- output -------------------------------------------------------------------------
     def now(self) -> float:
@@ -73,20 +87,45 @@ class Worker:
 
         Gst.init(None)
         caps = "audio/x-raw,format=F32LE,rate=16000,channels=1,layout=interleaved"
+        # User-supplied values (the WAV path, the device name) never go into the launch string:
+        # the elements are named and the values set as properties, so quotes or "!" in them can
+        # neither break the pipeline nor splice in extra elements.
         if self.wav:
-            src = f'filesrc location="{self.args.wav}" ! wavparse ! audioconvert ! audioresample'
+            src = "filesrc name=wavsrc ! wavparse ! audioconvert ! audioresample"
         elif self.args.live_source:
             # tests: a live GStreamer source standing in for the mic, through the mic code path
             src = f"{self.args.live_source} ! queue ! audioconvert ! audioresample"
         else:
-            tgt = f' target-object="{self.args.device}"' if self.args.device else ""
-            src = f"pipewiresrc do-timestamp=true client-name=promptbro{tgt} ! queue ! audioconvert ! audioresample"
+            src = "pipewiresrc name=mic do-timestamp=true client-name=promptbro ! queue ! audioconvert ! audioresample"
         desc = f"{src} ! {caps} ! appsink name=sink emit-signals=true sync=false max-buffers=100 drop=false"
         self.Gst = Gst
         self.pipeline = Gst.parse_launch(desc)
+        if self.wav:
+            self.pipeline.get_by_name("wavsrc").set_property("location", str(self.args.wav))
+        elif not self.args.live_source:
+            self._pick_device()
         sink = self.pipeline.get_by_name("sink")
         self._pending = np.zeros(0, dtype=np.float32)
         sink.connect("new-sample", self._on_sample)
+
+    def _pick_device(self, resuming: bool = False) -> None:
+        """Choose the capture node (audiosel: never Bluetooth unless pinned) and point the mic
+        element at it. Called at every worker start and every resume: docks come and go."""
+        from . import audiosel
+
+        dev, why = audiosel.select(self.args.device)
+        if dev is None and why == "pactl unavailable":
+            dev = self.args.device if self.args.device not in ("", audiosel.AUTO) else None
+        elif dev is None:
+            if resuming and self.chosen_device:
+                dev = self.chosen_device  # keep the last good one rather than fail a resume
+            else:
+                raise RuntimeError(why)
+        self.chosen_device = dev or ""
+        print(f"promptbro asr_worker: capture device {dev or 'system default'} ({why})",
+              file=sys.stderr, flush=True)
+        if dev:
+            self.pipeline.get_by_name("mic").set_property("target-object", dev)
 
     def _on_sample(self, sink):
         Gst = self.Gst
@@ -106,18 +145,50 @@ class Worker:
             self.last_audio = now
             if self.paused and not self.wav:
                 return Gst.FlowReturn.OK
-            self._pending = np.concatenate([self._pending, data])
-            b = self.block
-            while len(self._pending) >= b:
-                self.q.put((self._pending[:b], now))
-                self._pending = self._pending[b:]
+            self._enqueue(data, now)
         return Gst.FlowReturn.OK
+
+    def _enqueue(self, data, now: float) -> None:
+        """Cut samples into recognizer blocks and queue them. Live input keeps at most
+        MAX_BACKLOG_S queued, dropping the oldest blocks (never blocking this streaming
+        callback, which a NULL state change waits on). A WAV is queued whole, unbounded: it
+        is a development flag, and backpressure here would risk that deadlock."""
+        self._pending = np.concatenate([self._pending, data])
+        b = self.block
+        while len(self._pending) >= b:
+            self.q.put((self._pending[:b], now))
+            self._pending = self._pending[b:]
+        if self.wav:
+            return
+        cap = self.max_backlog_blocks
+        if self.q.qsize() > cap:
+            dropped = 0
+            while self.q.qsize() > cap:
+                try:
+                    self.q.get_nowait()
+                except queue.Empty:
+                    break
+                dropped += 1
+            if dropped and not self.backlog_warned:
+                self.backlog_warned = True
+                self.status("warning", message=f"decoding is behind; dropping audio older than "
+                                               f"{MAX_BACKLOG_S:.0f} s")
+        elif self.backlog_warned and self.q.qsize() <= cap // 2:
+            self.backlog_warned = False
 
     # ---- control ------------------------------------------------------------------------
     def stdin_loop(self):
         for line in sys.stdin:
-            cmd = line.strip().lower()
-            if cmd == "pause":
+            if self.handle_command(line.strip().lower()):
+                return
+        # stdin EOF: a live worker exits (parent gone); a --wav run keeps going to the end.
+        if not self.wav:
+            self.quit.set()
+
+    def handle_command(self, cmd: str) -> bool:
+        """Apply one control line. Returns True when the worker should stop reading stdin."""
+        if cmd == "pause":
+            with self.pipe_lock:
                 with self.out_lock:
                     self.paused = True
                 if not self.wav:  # live audio heard while paused is dropped; a WAV just waits
@@ -126,29 +197,62 @@ class Worker:
                     # mic: NULL releases the device (mic light off); resume goes NULL -> PLAYING,
                     # the same path as startup, which is more dependable for a live source
                     # than PAUSED -> PLAYING.
-                    with self.pipe_lock:
-                        self.pipeline.set_state(self.Gst.State.PAUSED if self.wav else self.Gst.State.NULL)
-                self.status("paused")
-            elif cmd == "resume":
-                if self.paused:
-                    if not self.wav:
-                        self._drain_queue()
-                        self._pending = np.zeros(0, dtype=np.float32)
-                    self.reset_req.set()
-                    self.last_audio = time.monotonic()
-                    self.stalled = bool(self.args.simulate_stall)
-                    if self.pipeline is not None:
-                        with self.pipe_lock:
-                            self.pipeline.set_state(self.Gst.State.PLAYING)
-                    with self.out_lock:
-                        self.paused = False
-                    self.status("resumed")
-            elif cmd == "quit":
-                self.quit.set()
-                return
-        # stdin EOF: a live worker exits (parent gone); a --wav run keeps going to the end.
-        if not self.wav:
+                    self.pipeline.set_state(self.Gst.State.PAUSED if self.wav else self.Gst.State.NULL)
+            self.status("paused")
+        elif cmd == "resume":
+            with self.pipe_lock:
+                if not self.paused or self.quit.is_set():
+                    return False
+                if not self.wav:
+                    self._drain_queue()
+                    self._pending = np.zeros(0, dtype=np.float32)
+                self.reset_req.set()
+                self.stalled = bool(self.args.simulate_stall)
+                self.dead_tries = 0  # an explicit resume starts the watchdog count afresh
+                if self.pipeline is not None:
+                    if not self.wav and not self.args.live_source:
+                        try:
+                            self._pick_device(resuming=True)  # the dock may have changed
+                        except Exception as e:  # noqa: BLE001
+                            print(f"promptbro asr_worker: device re-pick failed: {e}", file=sys.stderr, flush=True)
+                    self.pipeline.set_state(self.Gst.State.PLAYING)
+                self.last_restart = self.clock()
+                with self.out_lock:
+                    self.paused = False
+            self.status("resumed", device=self.chosen_device or "default")
+        elif cmd == "quit":
             self.quit.set()
+            return True
+        return False
+
+    def _watchdog_tick(self, now: float) -> bool:
+        """Mic watchdog, run when the bus is idle. Restarts a capture that has delivered no
+        samples for NO_AUDIO_S; after NO_AUDIO_TRIES restarts in a row that brought no audio
+        back, reports an error and returns True (stop: the controller then starts a fresh
+        process with a new PipeWire connection)."""
+        if self.wav or self.paused or self.quit.is_set():
+            return False
+        if self.last_audio > self.last_restart:
+            self.dead_tries = 0  # samples arrived after the last restart: the capture works
+        if now - max(self.last_audio, self.last_restart) <= NO_AUDIO_S:
+            return False
+        self.dead_tries += 1
+        if self.dead_tries > NO_AUDIO_TRIES:
+            self.status("error", message="no audio from the microphone")
+            return True
+        # Warn before taking pipe_lock (never write stdout under it), then re-check: a pause
+        # that landed in between has already released the device and must stay released.
+        self.status("warning", message=f"no audio for {NO_AUDIO_S:.0f} s; restarting capture "
+                                       f"({self.dead_tries}/{NO_AUDIO_TRIES})")
+        Gst = self.Gst
+        with self.pipe_lock:
+            if self.paused or self.quit.is_set():
+                return False
+            self.pipeline.set_state(Gst.State.NULL)
+            self.pipeline.set_state(Gst.State.PLAYING)
+            self.stalled = False
+            self.last_restart = self.clock()
+        return False
 
     def _drain_queue(self):
         try:
@@ -307,34 +411,22 @@ class Worker:
         except Exception as e:  # noqa: BLE001
             self.status("error", message=f"audio pipeline failed: {e}")
             return 2
-        self.status("ready", engine="sherpa-onnx", model=self.model_name, device=self.args.device or "default")
+        self.status("ready", engine="sherpa-onnx", model=self.model_name, device=self.chosen_device or "default")
         dec = threading.Thread(target=self.decode_loop, args=(rec,))
         dec.start()
         Gst = self.Gst
         self.pipeline.set_state(Gst.State.PLAYING)
+        self.last_restart = self.clock()
         threading.Thread(target=self.stdin_loop, daemon=True).start()  # after PLAYING so pause wins
         bus = self.pipeline.get_bus()
         rc = 0
-        dead_tries = 0
         while dec.is_alive() and not self.quit.is_set():
             msg = bus.timed_pop_filtered(100 * Gst.MSECOND, Gst.MessageType.ERROR | Gst.MessageType.EOS)
             if msg is None:
-                if not self.wav and not self.paused and time.monotonic() - self.last_audio > NO_AUDIO_S:
-                    dead_tries += 1
-                    if dead_tries > NO_AUDIO_TRIES:
-                        self.status("error", message="no audio from the microphone")
-                        rc = 1
-                        self.quit.set()
-                        break
-                    self.status("warning", message=f"no audio for {NO_AUDIO_S:.0f} s; restarting capture "
-                                                   f"({dead_tries}/{NO_AUDIO_TRIES})")
-                    with self.pipe_lock:
-                        self.pipeline.set_state(Gst.State.NULL)
-                        self.pipeline.set_state(Gst.State.PLAYING)
-                    self.stalled = False
-                    self.last_audio = time.monotonic()
-                elif time.monotonic() - self.last_audio < 1.0:
-                    dead_tries = 0
+                if self._watchdog_tick(self.clock()):
+                    rc = 1
+                    self.quit.set()
+                    break
                 continue
             if msg.type == Gst.MessageType.EOS:
                 while self.paused and not self.quit.is_set():  # file ended while paused: wait
@@ -351,14 +443,15 @@ class Worker:
             self.quit.set()
         self.quit.set()
         dec.join(timeout=2)
-        self.pipeline.set_state(Gst.State.NULL)
+        with self.pipe_lock:  # quit is set, so a late resume cannot restart it after this
+            self.pipeline.set_state(Gst.State.NULL)
         return rc
 
 
-def main(argv=None) -> int:
+def parse_args(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="promptbro.asr_worker")
     ap.add_argument("--model", help="model directory (default: config default in ~/.local/share)")
-    ap.add_argument("--device", default="", help="PipeWire node name (default: system default source)")
+    ap.add_argument("--device", default="auto", help="auto, or a PipeWire node name / glob / substring (auto never uses Bluetooth)")
     ap.add_argument("--wav", help="decode this WAV file instead of the microphone")
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--fast", dest="realtime", action="store_false", help="WAV: as fast as possible")
@@ -369,7 +462,11 @@ def main(argv=None) -> int:
     ap.add_argument("--block-ms", type=int, default=BLOCK_MS, help="audio block size fed to the recognizer")
     ap.add_argument("--live-source", help=argparse.SUPPRESS)  # tests: gst source used like the mic
     ap.add_argument("--simulate-stall", action="store_true", help=argparse.SUPPRESS)
-    args = ap.parse_args(argv)
+    return ap.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
     if not args.wav and not args.live_source and os.environ.get("PROMPTBRO_TEST"):
         print("asr_worker: PROMPTBRO_TEST is set; tests never open the microphone (use --wav)",
               file=sys.stderr)

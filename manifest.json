@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "supercleanse.promptbro",
   "name": "PromptBro",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "supercleanse",
   "license": "MIT",
   "description": "A teleprompter that follows your voice. Load a script from the bar, and PromptBro shows it a few lines at a time under the bar and scrolls as you speak. Speech recognition runs on your machine (sherpa-onnx, no cloud, no account, no GPU).",

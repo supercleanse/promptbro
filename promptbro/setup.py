@@ -37,7 +37,7 @@ engine = "sherpa-onnx"
 model = "{model}"
 models_dir = "{models_dir}"
 num_threads = 1
-device = ""
+device = "auto"
 endpoint_rule2_s = 1.0
 hotwords = false
 vad_rms = 0.01
@@ -53,12 +53,31 @@ level = "info"
 """
 
 
-def _install_model(name: str, models_dir: str, log=print) -> None:
+def _install_model(name: str, models_dir: str, log=print, repair: bool = False) -> None:
     from . import models
+    stale = models.stale_tmp_dirs(models_dir)
+    if stale:
+        log(f"leftover temporary folders from an interrupted install in {models_dir}: "
+            f"{', '.join(stale)} (safe to delete)")
+    if repair:
+        if models.has_manifest(name, models_dir) and models.verify(name, models_dir, deep=True):
+            log(f"model {name}: checked, files are intact")
+            return
+        log(f"model {name}: no integrity record or damaged files; downloading it again")
+        models.download(name, models_dir, log=log, force=True)
+        return
     if models.verify(name, models_dir):
         log(f"model {name}: already present")
         return
     models.download(name, models_dir, log=log)
+
+
+def _exec_quote(path: str) -> str:
+    """One Exec argument per the Desktop Entry spec (quote, escape, then string-level backslashes)."""
+    path = path.replace("%", "%%")
+    if any(c in path for c in " \t\n\"'\\><~|&;$*?#()`"):
+        path = '"' + "".join("\\" + c if c in '"`$\\' else c for c in path) + '"'
+    return path.replace("\\", "\\\\")
 
 
 def write_default_config(out=print) -> bool:
@@ -80,7 +99,7 @@ def install_desktop(out=print) -> None:
     shutil.copyfile(data / f"{paths.APP_ID}.svg", paths.icon_file())
     paths.applications_dir().mkdir(parents=True, exist_ok=True)
     tpl = (data / f"{paths.APP_ID}.desktop.in").read_text(encoding="utf-8")
-    paths.desktop_file().write_text(tpl.replace("@BINPATH@", str(root / "bin" / "promptbro")),
+    paths.desktop_file().write_text(tpl.replace("@BINPATH@", _exec_quote(str(root / "bin" / "promptbro"))),
                                     encoding="utf-8")
     out(f"installed {paths.desktop_file()}")
 
@@ -97,7 +116,7 @@ def link_bin(out=print) -> None:
 
 
 def run_setup(dev: bool = False, desktop: bool = True, print_snippet: bool = True, out=print,
-              run=subprocess.run, install_model=_install_model) -> int:
+              run=subprocess.run, install_model=_install_model, repair: bool = False) -> int:
     report = doctor.check()
     ids = {p["id"] for p in report["problems"]}
     if "old-install" in ids:
@@ -132,7 +151,10 @@ def run_setup(dev: bool = False, desktop: bool = True, print_snippet: bool = Tru
         out("installing dev packages")
         run([py, "-m", "pip", "install", "--quiet", *DEV_REQUIREMENTS], check=True)
     model, mdir = doctor._asr_settings()
-    install_model(model, mdir, out)
+    if repair:
+        install_model(model, mdir, out, repair=True)
+    else:
+        install_model(model, mdir, out)
     write_default_config(out)
     if desktop:
         install_desktop(out)
@@ -151,13 +173,14 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="promptbro setup")
     ap.add_argument("--dev", action="store_true", help="also install the test dependencies")
     ap.add_argument("--no-desktop", action="store_true", help="skip the desktop entry and PATH link")
+    ap.add_argument("--repair", action="store_true", help="re-check the model files and download again if damaged")
     ap.add_argument("--print-hypr-snippet", action="store_true", help="only print the Hyprland snippet")
     a = ap.parse_args(argv)
     if a.print_hypr_snippet:
         from .app import hypr_snippet
         print(hypr_snippet(True), end="")
         return 0
-    return run_setup(dev=a.dev, desktop=not a.no_desktop)
+    return run_setup(dev=a.dev, desktop=not a.no_desktop, repair=a.repair)
 
 
 # ---- uninstall-data ----------------------------------------------------------------------

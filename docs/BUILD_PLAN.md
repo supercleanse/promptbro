@@ -285,7 +285,7 @@ gst-plugin-pipewire, wl-clipboard, python-cairo, python-yaml, ffmpeg are present
   `docs/hyprland-snippet.lua` (the §7.1 block, with the absolute path filled in by `install.sh`
   when printing).
 - **Acceptance:** running `./install.sh` twice prints "already" for venv, model, config, icon,
-  desktop, and ends by printing the Lua snippet with `~/AI/Projects/Teleprompter/bin/teleprompter`
+  desktop, and ends by printing the Lua snippet with `~/src/Teleprompter/bin/teleprompter`
   paths; `~/.local/share/applications/com.example.Teleprompter.desktop` validates with
   `desktop-file-validate` (if installed) or at least has `Exec=`, `Icon=`, `Type=Application`;
   the script never touches `~/.config/hypr/`; `grep -c` of British spellings from the global

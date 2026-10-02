@@ -25,6 +25,7 @@ ShellRoot {
   }
 
   Bridge { id: bridge }
+  property var startFail: null
   FileView { id: statusFile; path: shell.runtimeDir + "/status.json"; }
   FileView { id: recentFile; path: shell.stateDir + "/recent.json"; }
 
@@ -54,6 +55,9 @@ ShellRoot {
       } else if (s === 4) {
         shell.expect("garbage -> offline", bridge.uiState, "offline")
         shell.expect("doctor ok", bridge.doctor && bridge.doctor.ok, true)
+        bridge.run(["/nonexistent/promptbro", "x"], function(code, so, se) { shell.startFail = code })
+      } else if (s === 5) {
+        shell.expect("failed start completes with -1", shell.startFail, -1)
         t.stop()
         if (shell.failures.length) console.log("BRIDGE_CHECK FAIL: " + shell.failures.join("; "))
         else console.log("BRIDGE_CHECK PASS")

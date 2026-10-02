@@ -136,6 +136,19 @@ function tooltipFor(st, state, doctor) {
   return "PromptBro: " + where + ", " + label
 }
 
+var ACTIVE_STATES = ["starting", "listening", "paused", "no-audio"]
+
+// Whether the bar widget stays revealed on its own (Spitball pattern: only
+// "quiet" states collapse until hover). In use = the prompter window is up
+// (status.visible) in a running state, or the app is in error, or setup is
+// needed (a fresh install must never be invisible, like Spitball's gear).
+// Hidden (loaded), idle with no script, and offline are not in use.
+function inUse(st, state) {
+  if (state === "error" || state === "setup") return true
+  if (ACTIVE_STATES.indexOf(state) === -1) return false
+  return !!(st && st.visible === true)
+}
+
 // Transport buttons work only while running with a script.
 function canNavigate(state) {
   return PROGRESS_STATES.indexOf(state) !== -1

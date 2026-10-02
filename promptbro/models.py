@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
+import json
 import os
 import shutil
 import sys
@@ -141,37 +143,119 @@ def _extract_safe(archive: Path, extract_to: Path, is_zip: bool) -> None:
             t.extractall(extract_to, filter="data")
 
 
-def verify(name: str, models_dir) -> bool:
+MANIFEST = ".promptbro-install.json"
+TMP_PREFIX = ".promptbro-dl-"
+OLD_PREFIX = ".promptbro-old-"
+NET_TIMEOUT_S = 30
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _write_manifest(root: Path, spec: ModelSpec) -> None:
+    files = {}
+    for rel in spec.files:
+        p = root / rel
+        files[rel] = {"size": p.stat().st_size, "sha256": _sha256_file(p)}
+    (root / MANIFEST).write_text(
+        json.dumps({"archive_sha256": spec.sha256, "files": files}, indent=1), encoding="utf-8")
+
+
+def _read_manifest(d: Path):
+    try:
+        m = json.loads((d / MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return m if isinstance(m, dict) and isinstance(m.get("files"), dict) else None
+
+
+def has_manifest(name: str, models_dir) -> bool:
+    return _read_manifest(Path(models_dir).expanduser() / name) is not None
+
+
+def verify(name: str, models_dir, deep: bool = False) -> bool:
+    """Cheap by default (presence, and sizes against the install manifest when there is one).
+
+    deep=True rehashes every file against the manifest. A model with no manifest (a legacy
+    install) stays valid on the cheap check."""
     spec = _spec(name)
     d = Path(models_dir).expanduser() / name
-    return all((d / f).is_file() and (d / f).stat().st_size > 0 for f in spec.files)
+    if not all((d / f).is_file() and (d / f).stat().st_size > 0 for f in spec.files):
+        return False
+    man = _read_manifest(d)
+    if man is None:
+        return True
+    if man.get("archive_sha256") != spec.sha256:
+        return False
+    for rel in spec.files:
+        ent = man["files"].get(rel)
+        if not isinstance(ent, dict) or (d / rel).stat().st_size != ent.get("size"):
+            return False
+        if deep and _sha256_file(d / rel) != ent.get("sha256"):
+            return False
+    return True
 
 
-def download(name: str, models_dir, log=print) -> Path:
+def stale_tmp_dirs(models_dir) -> list:
+    """Old-style tmpXXXXXX leftovers from interrupted installs (listed by setup, never deleted)."""
+    md = Path(models_dir).expanduser()
+    try:
+        return sorted(p.name for p in md.iterdir() if p.is_dir() and p.name.startswith("tmp"))
+    except OSError:
+        return []
+
+
+def download(name: str, models_dir, log=print, force: bool = False) -> Path:
     spec = _spec(name)
     models_dir = Path(models_dir).expanduser()
     dest = models_dir / name
-    if verify(name, models_dir):
+    if not force and verify(name, models_dir):
         log(f"{name}: already present at {dest}")
         return dest
     models_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=models_dir) as tmp:
-        archive = Path(tmp) / Path(spec.url).name
-        log(f"downloading {spec.url} (~{spec.size_mb} MB)")
-        req = urllib.request.Request(spec.url, headers={"User-Agent": "promptbro/0.2"})
-        with urllib.request.urlopen(req) as r, open(archive, "wb") as f:
-            shutil.copyfileobj(r, f)
-        log(f"verifying checksum")
-        if not _verify_checksum(archive, spec.sha256):
-            raise RuntimeError(f"{name}: checksum mismatch; archive may be corrupted")
-        ex = Path(tmp) / "x"
-        ex.mkdir()
-        _extract_safe(archive, ex, archive.suffix == ".zip")
-        tops = [p for p in ex.iterdir()]
-        src = tops[0] if len(tops) == 1 and tops[0].is_dir() else ex
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.move(str(src), str(dest))
+    with open(models_dir / ".install.lock", "a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        # Whoever held the lock before us may have just installed it.
+        if not force and verify(name, models_dir):
+            log(f"{name}: already present at {dest}")
+            return dest
+        for p in models_dir.glob(TMP_PREFIX + "*"):
+            shutil.rmtree(p, ignore_errors=True)
+        for p in models_dir.glob(OLD_PREFIX + "*"):
+            shutil.rmtree(p, ignore_errors=True)
+        tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX, dir=models_dir))
+        try:
+            archive = tmp / Path(spec.url).name
+            log(f"downloading {spec.url} (~{spec.size_mb} MB)")
+            req = urllib.request.Request(spec.url, headers={"User-Agent": "promptbro/0.2"})
+            with urllib.request.urlopen(req, timeout=NET_TIMEOUT_S) as r, open(archive, "wb") as f:
+                shutil.copyfileobj(r, f)
+            log("verifying checksum")
+            if not _verify_checksum(archive, spec.sha256):
+                raise RuntimeError(f"{name}: checksum mismatch; archive may be corrupted")
+            ex = tmp / "x"
+            ex.mkdir()
+            _extract_safe(archive, ex, archive.suffix == ".zip")
+            tops = [p for p in ex.iterdir()]
+            src = tops[0] if len(tops) == 1 and tops[0].is_dir() else ex
+            missing = [f for f in spec.files if not (src / f).is_file() or (src / f).stat().st_size == 0]
+            if missing:
+                raise RuntimeError(f"{name}: archive is missing required files: {', '.join(missing)}")
+            _write_manifest(src, spec)
+            old = None
+            if dest.exists() or dest.is_symlink():
+                old = models_dir / f"{OLD_PREFIX}{os.urandom(4).hex()}"
+                os.rename(dest, old)
+            os.rename(src, dest)
+            if old is not None:
+                shutil.rmtree(old, ignore_errors=True)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
     if not verify(name, models_dir):
         raise RuntimeError(f"{name}: download finished but required files are missing in {dest}")
     log(f"{name}: installed to {dest}")

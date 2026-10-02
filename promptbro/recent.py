@@ -29,8 +29,10 @@ def load(file: Path | None = None) -> list[dict]:
     f = file or paths.recent_file()
     try:
         data = json.loads(Path(f).read_text(encoding="utf-8"))
-        items = data.get("recent", []) if isinstance(data, dict) else []
     except (OSError, ValueError):
+        return []
+    items = data.get("recent") if isinstance(data, dict) else None
+    if not isinstance(items, list):
         return []
     out, seen = [], set()
     for it in items:

@@ -115,3 +115,33 @@ def test_no_audio_while_listening_never_shows_tracking(tmp_path, monkeypatch):
     c._listen_since = c._level_t = time.monotonic() - 5.0
     c._capture_health()
     assert c.status()["state"] == "paused" and c.status()["audio_age_s"] is None
+
+
+def test_worker_argv_isolates_cwd(tmp_path, monkeypatch):
+    c = make(tmp_path, monkeypatch)
+    assert c.worker_argv(tmp_path)[1] == "-P"
+
+
+def test_failed_worker_retries_on_resume_show_open(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    cfg = Config()
+    cfg.asr.models_dir = str(tmp_path / "no-models")
+    c = Controller(FakeView(), cfg, source="mic")
+    attempts = []
+    real = c._spawn
+
+    def counting():
+        attempts.append(c.restarts)
+        real()
+    c._spawn = counting
+    c.load_text(SKIP, None)
+    c.set_paused(False)
+    assert c.worker_state == "failed" and len(attempts) == 1
+    assert "promptbro setup" in c.worker_error
+    c.restarts = 3
+    c.set_paused(True)
+    c.set_paused(False)
+    assert len(attempts) == 2 and attempts[1] == 0
+    c.set_paused(True)
+    c.set_visible(True)
+    assert len(attempts) == 3 and attempts[2] == 0

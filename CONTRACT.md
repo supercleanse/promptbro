@@ -33,7 +33,7 @@ every 5 seconds as a heartbeat, and once on quit with `"state": "offline"`.
   "message": "",
   "opacity": 0.75,
   "pid": 41237,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "updated_at": 1790000000.4
 }
 ```
@@ -102,7 +102,7 @@ File checks only, no network, no GTK import, about 50 ms.
  "problems": [{"id": "venv-missing", "message": "PromptBro isn't set up yet", "fix": "setup"}],
  "missing_packages": [],
  "model": "sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-int8-2026-04-25",
- "model_present": true, "version": "0.2.0"}
+ "model_present": true, "version": "0.3.0"}
 ```
 
 Problem ids: `venv-missing`, `venv-python-mismatch` (system Python upgraded; setup rebuilds the

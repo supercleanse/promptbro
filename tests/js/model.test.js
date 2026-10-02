@@ -121,7 +121,7 @@ test("parseRecent: shape, dedup, cap of 8, garbage", () => {
 test("parseDoctor: normalizes, garbage is null", () => {
   const d = Model.parseDoctor(JSON.stringify({
     ok: false, problems: [{ id: "venv-missing", message: "m", fix: "setup" }],
-    missing_packages: ["gtk4"], model: "m1", model_present: true, version: "0.2.0",
+    missing_packages: ["gtk4"], model: "m1", model_present: true, version: "0.3.0",
   }));
   assert.equal(d.ok, false);
   assert.deepEqual(d.problems, [{ id: "venv-missing", message: "m", fix: "setup" }]);
@@ -159,4 +159,18 @@ test("clampOpacity", () => {
   assert.equal(Model.clampOpacity(2), 1.0);
   assert.equal(Model.clampOpacity(0.5), 0.5);
   assert.equal(Model.clampOpacity("x"), 0.75);
+});
+
+test("inUse: only a visible running prompter, error, or setup keeps the widget revealed", () => {
+  const st = (state, visible) => ({ state, visible });
+  for (const s of ["starting", "listening", "paused", "no-audio"]) {
+    assert.equal(Model.inUse(st(s, true), s), true, s + " visible");
+    assert.equal(Model.inUse(st(s, false), s), false, s + " hidden");
+  }
+  assert.equal(Model.inUse(st("error", false), "error"), true);
+  assert.equal(Model.inUse(st("offline", false), "setup"), true);
+  assert.equal(Model.inUse(st("loaded", false), "loaded"), false);
+  assert.equal(Model.inUse(st("idle", false), "idle"), false);
+  assert.equal(Model.inUse(st("offline", false), "offline"), false);
+  assert.equal(Model.inUse(null, "listening"), false);
 });

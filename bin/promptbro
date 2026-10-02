@@ -16,4 +16,4 @@ if [ ! -x "$VENV/bin/python3" ]; then
 fi
 export LD_PRELOAD="/usr/lib/libgtk4-layer-shell.so${LD_PRELOAD:+:$LD_PRELOAD}"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
-exec "$VENV/bin/python3" -m promptbro "$@"
+exec "$VENV/bin/python3" -P -m promptbro "$@"

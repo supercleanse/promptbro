@@ -16,7 +16,7 @@ Spitball. Call it PromptBro." Keep the hotkey legend that was just added to the 
 
 | Question | Decision | Why |
 |:--|:--|:--|
-| Repo | `~/AI/Projects/PromptBro`, made by `mv` of the existing repo (whole `.git` moves, so all history stays), then `git mv` for the package rename | No remote exists yet, so a plain move keeps every commit; `git log --follow` works across `git mv` |
+| Repo | `~/src/PromptBro`, made by `mv` of the existing repo (whole `.git` moves, so all history stays), then `git mv` for the package rename | No remote exists yet, so a plain move keeps every commit; `git log --follow` works across `git mv` |
 | Plugin id | `supercleanse.promptbro` | Same pattern as `supercleanse.spitball` and `supercleanse.expressvpn` |
 | GApplication id | `supercleanse.PromptBro` (D-Bus object path `/supercleanse/PromptBro`) | Drops the old namespace, same namespace as the plugin id |
 | CLI | `promptbro` (`bin/promptbro`). No `teleprompter` alias in the repo | the author wants clicks, not commands; hotkeys get repointed in the same pass |
@@ -38,7 +38,7 @@ Spitball. Call it PromptBro." Keep the hotkey legend that was just added to the 
 
 | What | Old | New |
 |:--|:--|:--|
-| Repo | `~/AI/Projects/Teleprompter` | `~/AI/Projects/PromptBro` |
+| Repo | `~/src/Teleprompter` | `~/src/PromptBro` |
 | Installed plugin | n/a | `~/.config/omarchy/plugins/supercleanse.promptbro` (dev: a symlink to the repo, the way Spitball is linked) |
 | Config | `~/.config/teleprompter/config.toml` | `~/.config/promptbro/config.toml` |
 | Venv | `~/.local/share/teleprompter/venv` | `~/.local/share/promptbro/venv` (rebuilt, not moved: a moved venv has stale absolute paths) |
@@ -255,7 +255,7 @@ For other users, `setup` prints `sudo pacman -S --needed <missing>` and stops; i
 
 ### 4.4 `pick-file`
 
-`promptbro/pickfile.py`: copy `~/AI/Projects/Spitball-v2/spitball/pickfolder.py` and its tests
+`promptbro/pickfile.py`: copy `~/src/Spitball-v2/spitball/pickfolder.py` and its tests
 (`tests/test_pickfolder.py`, mocked `gdbus`/`zenity`), then change:
 
 - portal options: `{'multiple': <false>, 'filters': <[('Scripts', [(uint32 0, '*.md'), (uint32 0, '*.txt'), (uint32 0, '*.markdown')]), ('All files', [(uint32 0, '*')])]>, 'current_filter': <('Scripts', [(uint32 0, '*.md'), (uint32 0, '*.txt'), (uint32 0, '*.markdown')])>}`; add `'current_folder': <b'/dir/'>` (the folder of the most recent script) only if a unit test of the exact `gdbus` argv passes and the author's manual check in T12 shows the dialog opening there; drop it otherwise.
@@ -399,7 +399,7 @@ fills missing fields), `isStale(st, nowMs)` (15 s), `uiState(st, nowMs, doctor)`
 
 ### 6.3 Dev install (the author's machine)
 
-`scripts/dev-install.sh`: `ln -s ~/AI/Projects/PromptBro ~/.config/omarchy/plugins/supercleanse.promptbro`
+`scripts/dev-install.sh`: `ln -s ~/src/PromptBro ~/.config/omarchy/plugins/supercleanse.promptbro`
 (refuse if that path exists and isn't already this link). It does not rescan or restart the
 shell; it prints the command for the author. `scripts/dev-uninstall.sh` removes only that link.
 
@@ -425,7 +425,7 @@ hl.layer_rule({ match = { namespace = "^promptbro$" }, no_screen_share = true })
 
 `~/.config/hypr/bindings.lua` lines 44-49 with
 ```lua
--- PromptBro (Omarchy plugin supercleanse.promptbro; dev checkout ~/AI/Projects/PromptBro)
+-- PromptBro (Omarchy plugin supercleanse.promptbro; dev checkout ~/src/PromptBro)
 o.bind("SUPER + SHIFT + T",            "PromptBro toggle",  "~/.config/omarchy/plugins/supercleanse.promptbro/bin/promptbro toggle")
 o.bind("SUPER + SHIFT + backslash",    "PromptBro pause",   "~/.config/omarchy/plugins/supercleanse.promptbro/bin/promptbro pause")
 o.bind("SUPER + SHIFT + bracketright", "PromptBro next",    "~/.config/omarchy/plugins/supercleanse.promptbro/bin/promptbro next")
@@ -490,11 +490,11 @@ commit this plan file before T9.
 ### T1. Move the repo
 - **Model:** haiku. **Depends on:** T0. **Needs the author:** yes, a one-line OK that he isn't using the
   prompter right now, because the running app must be quit (its worker restarts from the old path).
-- **Goal:** `~/AI/Projects/PromptBro` with full history.
-- **Steps:** if running, `~/AI/Projects/Teleprompter/bin/teleprompter quit`. Then
-  `mv ~/AI/Projects/Teleprompter ~/AI/Projects/PromptBro`. Tell the author the hotkeys are offline
+- **Goal:** `~/src/PromptBro` with full history.
+- **Steps:** if running, `~/src/Teleprompter/bin/teleprompter quit`. Then
+  `mv ~/src/Teleprompter ~/src/PromptBro`. Tell the author the hotkeys are offline
   until T4.
-- **Acceptance:** `git -C ~/AI/Projects/PromptBro log --oneline | wc -l` equals the old count;
+- **Acceptance:** `git -C ~/src/PromptBro log --oneline | wc -l` equals the old count;
   `PROMPTBRO_PLAN.md` is present and untracked.
 
 ### T2. Rename package, ids and env vars
@@ -615,7 +615,7 @@ commit this plan file before T9.
     `ipcTarget`, version equals `__version__` and pyproject, `omarchy plugin validate .`, no
     symlinks in the tree, `qmllint` when present). `tests/run.sh`.
   - Commit `PROMPTBRO_PLAN.md` as `docs/PROMPTBRO_PLAN.md`.
-- **Acceptance:** `omarchy plugin validate ~/AI/Projects/PromptBro` exits 0; `tests/run.sh` green.
+- **Acceptance:** `omarchy plugin validate ~/src/PromptBro` exits 0; `tests/run.sh` green.
 
 ### T10. Model download hardening
 - **Model:** haiku. **Depends on:** T2. **Parallel with:** T5-T9.
@@ -649,7 +649,7 @@ commit this plan file before T9.
 
 ### T13. Public GitHub repo (the author)
 - **Needs the author:** creating and pushing a public repo is his call. Proposed:
-  `gh repo create supercleanse/promptbro --public --source ~/AI/Projects/PromptBro --push`
+  `gh repo create supercleanse/promptbro --public --source ~/src/PromptBro --push`
   after he reviews the README and `preview.png`. Never run by an agent without his explicit yes.
 
 ### T14. Marketplace submission (the author, later)

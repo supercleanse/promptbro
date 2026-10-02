@@ -85,3 +85,16 @@ def test_default_location_follows_xdg_state(tmp_path, monkeypatch):
     (p,) = mk(tmp_path, 1)
     recent.add(p)
     assert (tmp_path / "st" / "promptbro" / "recent.json").is_file()
+
+
+import pytest
+
+
+@pytest.mark.parametrize("val", ["null", "5", '"str"', "{}"])
+def test_malformed_recent_value_loads_empty_and_add_works(tmp_path, val):
+    f = tmp_path / "recent.json"
+    f.write_text('{"schema": 1, "recent": ' + val + '}')
+    assert recent.load(f) == []
+    p = tmp_path / "a.md"
+    p.write_text("x")
+    assert [e["path"] for e in recent.add(p, now=1, file=f)] == [str(p.resolve())]

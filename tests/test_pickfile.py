@@ -1,4 +1,4 @@
-"""promptbro.pickfile tests: gdbus/zenity/kdialog are all mocked -- never
+"""promptbro.pickfile tests: zenity/kdialog are mocked; the portal path is covered by test_pickfile_portal.py -- never
 opens a real dialog. See tests/live/test_live.py for the live-gated check,
 which only confirms the portal interface is introspectable (never opens a
 dialog on the user's screen either). Nothing here opens a real dialog."""
@@ -13,89 +13,7 @@ def _which_only(*names):
     return lambda n: f"/usr/bin/{n}" if n in names else None
 
 
-class TestPortalCallHandle(unittest.TestCase):
-    def test_extracts_handle_from_gdbus_output(self):
-        out = ("(objectpath '/org/freedesktop/portal/desktop/request/1_2/t0',)\n")
-        run = mock.Mock(return_value=mock.Mock(returncode=0, stdout=out))
-        handle = pickfile._portal_call_handle("Choose", run=run)
-        self.assertEqual(handle, "/org/freedesktop/portal/desktop/request/1_2/t0")
-
-    def test_nonzero_exit_is_none(self):
-        run = mock.Mock(return_value=mock.Mock(returncode=1, stdout=""))
-        self.assertIsNone(pickfile._portal_call_handle("Choose", run=run))
-
-    def test_oserror_is_none(self):
-        run = mock.Mock(side_effect=OSError("no gdbus"))
-        self.assertIsNone(pickfile._portal_call_handle("Choose", run=run))
-
-
-class TestPortalWaitResponse(unittest.TestCase):
-    def _popen_with_lines(self, lines):
-        proc = mock.Mock()
-        proc.stdout = iter(lines)
-        proc.poll.return_value = 0  # already exited, so no terminate() needed
-        return mock.Mock(return_value=proc)
-
-    def test_success_extracts_path(self):
-        handle = "/org/.../request/1/t0"
-        line = (f"{handle}: org.freedesktop.portal.Request.Response "
-                 "(uint32 0, {'uris': <['file:///home/morgan/Downloads/a.md']>})\n")
-        popen = self._popen_with_lines([line])
-        result = pickfile._portal_wait_response(handle, popen=popen, timeout=5)
-        self.assertEqual(result, "/home/morgan/Downloads/a.md")
-
-    def test_canceled_returns_empty_string(self):
-        handle = "/org/.../request/1/t0"
-        line = f"{handle}: org.freedesktop.portal.Request.Response (uint32 1, {{}})\n"
-        popen = self._popen_with_lines([line])
-        result = pickfile._portal_wait_response(handle, popen=popen, timeout=5)
-        self.assertEqual(result, "")
-
-    def test_unrelated_lines_are_ignored(self):
-        handle = "/org/.../request/1/t0"
-        lines = [
-            "/some/other/handle: org.freedesktop.portal.Request.Response (uint32 0, {})\n",
-            f"{handle}: org.freedesktop.portal.Request.Response (uint32 0, "
-            "{'uris': <['file:///tmp/x']>})\n",
-        ]
-        popen = self._popen_with_lines(lines)
-        result = pickfile._portal_wait_response(handle, popen=popen, timeout=5)
-        self.assertEqual(result, "/tmp/x")
-
-    def test_no_response_line_ever_is_none(self):
-        popen = self._popen_with_lines([])
-        result = pickfile._portal_wait_response("/x", popen=popen, timeout=5)
-        self.assertIsNone(result)
-
-    def test_oserror_launching_monitor_is_none(self):
-        popen = mock.Mock(side_effect=OSError("no gdbus"))
-        self.assertIsNone(pickfile._portal_wait_response("/x", popen=popen))
-
-    def test_response_with_no_uris_is_none(self):
-        handle = "/x"
-        line = f"{handle}: org.freedesktop.portal.Request.Response (uint32 0, {{}})\n"
-        popen = self._popen_with_lines([line])
-        result = pickfile._portal_wait_response(handle, popen=popen, timeout=5)
-        self.assertIsNone(result)
-
-
 class TestExactArgv(unittest.TestCase):
-    def test_portal_call_argv(self):
-        run = mock.Mock(return_value=mock.Mock(returncode=0, stdout="(objectpath '/h',)\n"))
-        pickfile._portal_call_handle("Choose a script", run=run)
-        cmd = run.call_args.args[0]
-        self.assertEqual(cmd[:8], ["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Desktop",
-                                   "--object-path", "/org/freedesktop/portal/desktop", "--method"])
-        self.assertEqual(cmd[8:11], ["org.freedesktop.portal.FileChooser.OpenFile", "", "Choose a script"])
-        opts = cmd[11]
-        self.assertIn("'multiple': <false>", opts)
-        self.assertNotIn("'directory'", opts)
-        self.assertNotIn("current_folder", opts)
-        for pat in ("*.md", "*.txt", "*.markdown"):
-            self.assertIn(f"(uint32 0, '{pat}')", opts)
-        self.assertIn("('All files', [(uint32 0, '*')])", opts)
-        self.assertIn("'current_filter': <('Scripts'", opts)
-
     def test_zenity_argv(self):
         run = mock.Mock(return_value=mock.Mock(returncode=0, stdout="/x.md\n"))
         pickfile._try_zenity("T", run=run)
@@ -174,7 +92,8 @@ class TestKdialogFallback(unittest.TestCase):
 
 class TestPickFileDispatch(unittest.TestCase):
     def test_no_tool_at_all_exits_2(self):
-        with mock.patch("shutil.which", return_value=None):
+        with mock.patch("shutil.which", return_value=None), \
+             mock.patch("promptbro.pickfile._try_portal", return_value=(False, "")):
             code, path = pickfile.pick_file("Choose")
         self.assertEqual(code, 2)
         self.assertEqual(path, "")
@@ -204,6 +123,7 @@ class TestPickFileDispatch(unittest.TestCase):
 
     def test_falls_through_to_kdialog(self):
         with mock.patch("shutil.which", _which_only("zenity", "kdialog")), \
+             mock.patch("promptbro.pickfile._try_portal", return_value=(False, "")), \
              mock.patch("promptbro.pickfile._try_zenity", return_value=(False, "")), \
              mock.patch("promptbro.pickfile._try_kdialog", return_value=(True, "/home/morgan/Calls")):
             code, path = pickfile.pick_file("Choose")
@@ -216,6 +136,12 @@ class TestPickFileDispatch(unittest.TestCase):
              mock.patch("promptbro.pickfile._try_kdialog", return_value=(False, "")):
             code, path = pickfile.pick_file("Choose")
         self.assertEqual((code, path), (2, ""))
+
+
+class TestTrailingNewline(unittest.TestCase):
+    def test_only_one_newline_removed(self):
+        run = mock.Mock(return_value=mock.Mock(returncode=0, stdout="/tmp/a b \n"))
+        self.assertEqual(pickfile._try_zenity("T", run=run), (True, "/tmp/a b "))
 
 
 if __name__ == "__main__":

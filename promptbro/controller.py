@@ -93,6 +93,7 @@ class Controller:
         self._cancel = None
         self.worker_state = "stopped"   # stopped | starting | running | restarting | failed | finished
         self.worker_error = ""
+        self.worker_device = ""         # capture node the worker reported (ready/resumed)
         self.restarts = 0
         self._spawned_at = 0.0
         self._quitting = False
@@ -244,7 +245,13 @@ class Controller:
             if not self._replay_started:
                 self._start_replay()
         elif self.source in ("mic", "wav"):
-            if self.worker_state in ("stopped",):
+            if self.worker_state == "failed":
+                # An explicit user action (resume/show/open) retries a dead worker.
+                self.restarts = 0
+                self.worker_error = ""
+                self._set_override(None)
+                self._spawn()
+            elif self.worker_state == "stopped":
                 self._spawn()
         if self.params.display_coasting and not self._coast_id:
             self._coast_id = GLib.timeout_add(100, self._coast_tick)
@@ -260,7 +267,7 @@ class Controller:
 
     def worker_argv(self, model_dir: Path) -> list[str]:
         a = self.cfg.asr
-        argv = [sys.executable, "-m", "promptbro.asr_worker", "--model", str(model_dir),
+        argv = [sys.executable, "-P", "-m", "promptbro.asr_worker", "--model", str(model_dir),
                 "--threads", str(a.num_threads), "--endpoint-rule2", str(a.endpoint_rule2_s)]
         if self.device:
             argv += ["--device", self.device]
@@ -272,8 +279,8 @@ class Controller:
         self._restart_id = 0
         md = self._model_dir()
         if md is None:
-            self._fail("speech model missing - run: python -m promptbro.models download",
-                       toast="Speech model missing - see log")
+            self._fail("speech model missing - run: promptbro setup",
+                       toast="Speech model missing - run Setup from the menu")
             return
         argv = self.worker_argv(md)
         launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.STDIN_PIPE
@@ -456,11 +463,16 @@ class Controller:
                 self.worker_error = ""
                 self._changed()
                 self._listen_since = time.monotonic()
+                self.worker_device = str(ev.get("device", "") or "")
                 log.info("worker ready (%s, %s)", ev.get("model", "?"), ev.get("device", "?"))
                 if self._override:
                     self._set_override(None)
             elif st in ("paused", "resumed"):
-                log.info("worker -> %s", st)
+                if st == "resumed" and ev.get("device"):
+                    self.worker_device = str(ev["device"])
+                    log.info("worker -> resumed (capture device %s)", self.worker_device)
+                else:
+                    log.info("worker -> %s", st)
             elif st == "warning":
                 log.warning("worker: %s", ev.get("message", ""))
             elif st == "eof":
@@ -600,6 +612,7 @@ class Controller:
                 "pid": int(self.proc.get_identifier()) if self.proc and self.proc.get_identifier() else None,
                 "restarts": self.restarts,
                 "error": self.worker_error or None,
+                "device": self.worker_device or None,
             },
             "latency": {
                 "align_ms_p90": _pct(self.align_ms, 0.9),

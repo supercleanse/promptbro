@@ -66,7 +66,7 @@ class ASRConfig:
     model: str = paths.DEFAULT_MODEL
     models_dir: str = field(default_factory=lambda: str(paths.models_dir()))
     num_threads: int = 1
-    device: str = ""
+    device: str = "auto"   # "auto" (or ""): never a Bluetooth mic; else a node name, glob or substring
     endpoint_rule2_s: float = 1.0
     hotwords: bool = False
     vad_rms: float = 0.01    # level RMS above this counts as voice (status dot, coasting)

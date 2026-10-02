@@ -60,14 +60,25 @@ Item {
     Process {
       id: proc
       property var onDone: null
+      property bool finished: false
+      property bool exitedSeen: false
       stdout: StdioCollector { id: out; waitForEnd: true }
       stderr: StdioCollector { id: err; waitForEnd: true }
-      onExited: function(code) {
+      function finish(code, so, se) {
+        if (proc.finished) return
+        proc.finished = true
         var cb = proc.onDone
-        var so = out.text
-        var se = err.text
         proc.destroy()
         if (cb) cb(code, so, se)
+      }
+      onExited: function(code) {
+        proc.exitedSeen = true
+        proc.finish(code, out.text, err.text)
+      }
+      // A process that fails to start emits runningChanged(false) without exited.
+      onRunningChanged: {
+        if (!proc.running && !proc.exitedSeen)
+          Qt.callLater(function() { if (!proc.finished) proc.finish(-1, "", "failed to start") })
       }
     }
   }
@@ -90,7 +101,7 @@ Item {
     Quickshell.execDetached(Model.activateArgs(root.appId, name, param))
   }
 
-  function open(path) { root.cli(["open", path]) }
+  function open(path) { root.cli(["open", "--", path]) }
   function paste() { root.cli(["paste"]) }
   function showOrLaunch() {
     if (root.running) root.act("show")
@@ -100,7 +111,8 @@ Item {
   // `promptbro pick-file`: cb(code, path). 0 chosen, 1 canceled, 2 no picker.
   function pickFile(cb) {
     root.run([root.cliPath, "pick-file"], function(code, so, se) {
-      cb(code, String(so || "").trim())
+      var p = String(so || "")
+      cb(code, p.endsWith("\n") ? p.slice(0, -1) : p)
     })
   }
 

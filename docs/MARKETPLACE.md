@@ -7,7 +7,7 @@ reviewers flagged on other plugins first.
 ## Before submitting
 
 - [ ] Repo `supercleanse/promptbro` is public, with `manifest.json` at the root and a tagged
-      release matching `version` (currently 0.2.0).
+      release matching `version` (currently 0.3.0).
 - [ ] `omarchy plugin validate .` exits 0 and `tests/run.sh` is green.
 - [ ] README install line works on a clean account:
       `omarchy plugin add https://github.com/supercleanse/promptbro --enable`, then Set up.
@@ -52,7 +52,7 @@ notes. Shipped files are clean (checked by `tests/test_manifest.py`), and `docs/
 redacted, but earlier commits are not. Publish a fresh history rather than pushing this one:
 
 ```bash
-git checkout --orphan public && git add -A && git commit -m "PromptBro 0.2.0"
+git checkout --orphan public && git add -A && git commit -m "PromptBro 0.3.0"
 ```
 
 then push that branch as `main`.

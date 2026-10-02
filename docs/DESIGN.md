@@ -21,7 +21,7 @@ here.
 
 | Item | Value |
 |:--|:--|
-| Host | the dev laptop, Dell XPS 14 (DA14260) |
+| Host | a development laptop |
 | OS | Omarchy 4.0.0.alpha (Arch), kernel 7.2.5-3-omarchy, Hyprland 0.56.2 (Lua config) |
 | CPU | Intel Core Ultra X9 378H (Panther Lake), 16 cores, AVX2 + AVX-VNNI, no AVX-512 |
 | GPU | Intel Arc B390 (integrated). **No NVIDIA, no CUDA.** ASR runs on CPU. |
@@ -683,7 +683,8 @@ surface inside the area not reserved by the bar, so the margin is just the gap a
 hard-code the bar height (Hyprland `arrangeLayerArray`: bounds = usable area when zone ≠ −1);
 `KeyboardMode.NONE` means it never steals focus — all control is via CLI verbs from Hyprland
 binds. If the monitor is unplugged/replugged, GTK's monitor list changes; on `monitors`
-`items-changed`, re-pick the monitor and re-present.
+`items-changed`, wait for the list to settle (400 ms), then re-pick and re-present if visible
+(a hidden window re-picks on its next show).
 
 **Click-through** (default on, `window.click_through = true`): after every `map`, set an empty
 input region: `win.get_surface().set_input_region(cairo.Region())` (pycairo `cairo`, not
@@ -707,11 +708,11 @@ hl.layer_rule({ match = { namespace = "^teleprompter$" }, animation = "fade" })
 -- hl.layer_rule({ match = { namespace = "^teleprompter$" }, no_screen_share = true })
 
 -- ~/.config/hypr/bindings.lua
-o.bind("SUPER + SHIFT + T",            "Teleprompter toggle",  "~/AI/Projects/Teleprompter/bin/teleprompter toggle")
-o.bind("SUPER + SHIFT + backslash",    "Teleprompter pause",   "~/AI/Projects/Teleprompter/bin/teleprompter pause")
-o.bind("SUPER + SHIFT + bracketright", "Teleprompter next",    "~/AI/Projects/Teleprompter/bin/teleprompter next")
-o.bind("SUPER + SHIFT + bracketleft",  "Teleprompter prev",    "~/AI/Projects/Teleprompter/bin/teleprompter prev")
-o.bind("SUPER + SHIFT + Home",         "Teleprompter restart", "~/AI/Projects/Teleprompter/bin/teleprompter restart")
+o.bind("SUPER + SHIFT + T",            "Teleprompter toggle",  "~/src/Teleprompter/bin/teleprompter toggle")
+o.bind("SUPER + SHIFT + backslash",    "Teleprompter pause",   "~/src/Teleprompter/bin/teleprompter pause")
+o.bind("SUPER + SHIFT + bracketright", "Teleprompter next",    "~/src/Teleprompter/bin/teleprompter next")
+o.bind("SUPER + SHIFT + bracketleft",  "Teleprompter prev",    "~/src/Teleprompter/bin/teleprompter prev")
+o.bind("SUPER + SHIFT + Home",         "Teleprompter restart", "~/src/Teleprompter/bin/teleprompter restart")
 ```
 
 Plain string commands, not `{ launch = … }`: a verb sent to a running instance is a short D-Bus
@@ -939,7 +940,8 @@ WAV (< 200 KB) is checked in so `test_asr_worker` can run without espeak-ng.
 | Model CPU higher than estimated during a call | `bench_asr.py` (T10) measures per-chunk decode time and `pidstat` CPU; fall back to `num_threads=1`, the 20M zipformer, or Vosk |
 | Partial cadence too coarse (transducer emits a word only when confident) | the 80 ms model emits sub-word pieces continuously; if word latency is still > 400 ms, try the CTC `…-ctc-en-80ms-int8` variant (`from_nemo_ctc`) which is cheaper and more eager |
 | Aligner holds too often / jumps wrongly on the author's real speech | every parameter is in config; record a fixture of the author reading (with permission, `scripts/record_fixture.py --mic`), add it to the corpus, tune, re-run the suite |
-| Layer-shell surface lands on the wrong monitor when undocked | `monitor = "auto"` (default) follows the focused monitor on every show; a pinned connector that is missing falls back to auto (logged); re-picks on `items-changed`. `set_monitor` on a mapped surface does not move it, so `show()` unmaps before re-picking when the target changed |
+| Layer-shell surface lands on the wrong monitor when undocked | `monitor = "auto"` (default) follows the focused monitor on every show; a pinned connector that is missing falls back to auto (logged); re-picks once `items-changed` has been quiet for 400 ms (hidden windows wait for the next show; only valid monitors are passed to layer-shell). `set_monitor` on a mapped surface does not move it, so `show()` unmaps before re-picking when the target changed |
+| GTK < 4.22.5 crashes when the compositor re-sends dmabuf feedback on hotplug (GTK a8a5692c) | `gtkcompat.apply_dmabuf_workaround()` adds `zwp_linux_dmabuf_v1` to `GDK_WAYLAND_DISABLE` on affected GTK before the display opens |
 | The bar height changes (font base-size) | exclusive_zone 0 places us under whatever the bar reserves; no hard-coded 35 |
 | `pipewiresrc` default-source switching mid-session | WirePlumber moves the stream when the default changes; if not, `teleprompter resume` recreates the pipeline (worker `pause`/`resume` tears down and rebuilds) |
 | Window hidden from screen share also hidden from screenshots | `no_screen_share` is commented out in the printed snippet; the author decides |

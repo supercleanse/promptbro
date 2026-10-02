@@ -23,7 +23,7 @@ ShellRoot {
   function status(state, line, extra) {
     var s = { schema: 1, state: state, path: "/home/demo/Scripts/keynote-draft.md",
       title: "keynote-draft.md", line: line, lines: 48, visible: state !== "loaded" && state !== "idle",
-      message: "", opacity: 0.75, pid: 4242, version: "0.2.0", updated_at: Date.now() / 1000 }
+      message: "", opacity: 0.75, pid: 4242, version: "0.3.0", updated_at: Date.now() / 1000 }
     for (var k in extra) s[k] = extra[k]
     return s
   }
@@ -38,9 +38,14 @@ ShellRoot {
   // [file label, ui state, status object, doctor mode]
   readonly property var widgetShots: [
     { name: "setup", st: null, doctor: "bad" },
-    { name: "offline", st: null, doctor: "ok" },
-    { name: "idle", st: status("idle", 0, { path: "", title: "", lines: 0 }), doctor: "ok" },
-    { name: "loaded", st: status("loaded", 11, {}), doctor: "ok" },
+    // Not in use: the plain names render revealed (hovered); collapsed-* the same states at rest.
+    { name: "offline", st: null, doctor: "ok", reveal: true },
+    { name: "idle", st: status("idle", 0, { path: "", title: "", lines: 0 }), doctor: "ok", reveal: true },
+    { name: "loaded", st: status("loaded", 11, {}), doctor: "ok", reveal: true },
+    { name: "collapsed-offline", st: null, doctor: "ok" },
+    { name: "collapsed-idle", st: status("idle", 0, { path: "", title: "", lines: 0 }), doctor: "ok" },
+    { name: "collapsed-loaded", st: status("loaded", 11, {}), doctor: "ok" },
+    { name: "collapsed-listening-hidden", st: status("listening", 11, { visible: false }), doctor: "ok" },
     { name: "starting", st: status("starting", 11, {}), doctor: "ok" },
     { name: "listening", st: status("listening", 11, {}), doctor: "ok" },
     { name: "paused", st: status("paused", 11, {}), doctor: "ok" },
@@ -57,7 +62,7 @@ ShellRoot {
     { name: "fallback", ui: "offline", st: Model.offlineStatus(), doctor: null, recent: [], fallback: true }
   ]
 
-  property int index: 0   // 0..8 widget, 9..14 dropdown
+  property int index: 0   // widget shots first, then dropdown
   readonly property int widgetCount: widgetShots.length
 
   FileView { id: statusFile; path: shell.runtimeDir + "/status.json"; printErrors: false }
@@ -82,6 +87,7 @@ ShellRoot {
         anchors.centerIn: parent
         active: false
         source: "Widget.qml"
+        onLoaded: item.forceReveal = !!shell.widgetShots[Math.min(shell.index, shell.widgetCount - 1)].reveal
       }
     }
 

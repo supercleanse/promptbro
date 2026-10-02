@@ -25,6 +25,15 @@ camera instead of at a scrollbar. Speech recognition runs on your machine
 - **Works from the keyboard too.** Hotkeys for toggle, pause, next line, previous line and
   restart (below).
 
+## What's new in 0.3.0
+
+- The file picker works on real desktop portals.
+- PromptBro never uses a Bluetooth microphone unless you pin one.
+- It survives display hotplug (works around a GTK 4.22.4 crash).
+- Status heartbeat, launch-race and watchdog fixes.
+- The bar icon hides itself when idle, like the other widgets.
+- Hotkey legend in the menu, and an opacity slider.
+
 ## Install
 
 ```bash
@@ -154,8 +163,13 @@ Edit `~/.config/promptbro/config.toml`. The common settings:
   `"DP-1"` pins it), `width`, `height`, `top_gap`, `opacity` (0.3 to 1.0), `click_through`,
   `hide_from_screen_share`, `font`, `current_pt`, `other_pt`, `history_lines`, `upcoming_lines`,
   `animation_ms`, `show_legend` (the dim hotkey line along the bottom).
-- **`[asr]`**: `model`, `models_dir`, `num_threads`, `device` (a PipeWire source name; empty
-  means the default microphone), `endpoint_rule2_s`.
+- **`[asr]`**: `model`, `models_dir`, `num_threads`, `device`, `endpoint_rule2_s`.
+  `device = "auto"` (the default; empty means the same) uses the system default microphone
+  unless it is Bluetooth, then the best USB/external one, then the built-in mic. PromptBro never
+  opens a Bluetooth mic on its own: that would switch AirPods from music to call mode. Pin one
+  with a node name, a glob, or a stable substring such as `"Studio_Display"`; a missing pin falls
+  back to auto. The choice is re-made at every start and resume, and shown as `worker.device`
+  in `promptbro status` and in the log.
 - **`[aligner]`**: `tail_tokens`, `ahead_units`, `display_coasting`, `line_complete_on_final`.
 - **`[log]`**: `level`.
 
